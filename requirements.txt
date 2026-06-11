@@ -1,0 +1,7 @@
+# Mạng hiệu năng cao (connection pooling, keep-alive, certifi SSL sẵn). engine.py cần httpx.
+httpx>=0.27
+# Tùy chọn: bật HTTP/2 (engine tự dùng nếu có, không bắt buộc)
+# httpx[http2]>=0.27
+
+# GUI (chỉ app.py cần)
+PyQt6>=6.6

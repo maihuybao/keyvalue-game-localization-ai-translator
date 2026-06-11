@@ -1,0 +1,24 @@
+{
+  "provider": "openai",
+  "base_url": "https://chat.trollllm.xyz",
+  "keys": [
+    "DAN-API-KEY-CUA-BAN-VAO-DAY"
+  ],
+  "model": "claude-sonnet-4-6",
+  "models": [
+    "claude-sonnet-4-6"
+  ],
+  "auto_switch": false,
+  "max_tokens": 8192,
+  "temperature": 0.3,
+  "timeout": 180,
+  "workers": 8,
+  "maxlines": 50,
+  "maxchars": 8000,
+  "retries": 5,
+  "rounds": 6,
+  "src": "",
+  "out": "",
+  "sysprompt_path": "system_prompt.txt",
+  "lang": "vi"
+}

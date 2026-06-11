@@ -1,0 +1,28 @@
+# ============================================================================
+#  .gitignore — BẢO VỆ KHÓA BÍ MẬT & RÁC. Đọc kỹ trước khi commit!
+# ============================================================================
+
+# --- Cấu hình & khóa API (CHỨA KEY THẬT — TUYỆT ĐỐI KHÔNG commit) ---
+config.json
+keys.txt
+keys_trollllm.txt
+tk gmail.txt
+*.key
+
+# --- Checkpoint / file tạm sinh ra khi dịch ---
+*.done.txt
+*.tmp
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# --- macOS ---
+.DS_Store
+
+# --- Rác cá nhân ---
+a.txt
