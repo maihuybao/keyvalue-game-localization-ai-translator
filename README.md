@@ -19,7 +19,6 @@ Tác giả: **PS5VietHoa** — *Phước Lê & Mèo Mặt Căng*.
 - [Resume — dịch tiếp khi gián đoạn](#resume--dịch-tiếp-khi-gián-đoạn)
 - [Cấu trúc dự án](#cấu-trúc-dự-án)
 - [Kiểm thử](#kiểm-thử)
-- [Bảo mật — đọc trước khi commit](#bảo-mật--đọc-trước-khi-commit)
 
 ---
 
@@ -193,23 +192,6 @@ python3 tests/test_engine.py
 ```
 
 Báo `PASS=… FAIL=0` nếu mọi thứ ổn (exit code 1 khi có lỗi). Luôn chạy lại sau khi sửa `engine.py`.
-
----
-
-## Bảo mật — đọc trước khi commit
-
-> [!WARNING]
-> **KHÔNG commit file chứa API key.** Trước khi `git add`, hãy chắc chắn các file sau **đã bị `.gitignore` chặn** (mặc định đã có): `config.json`, `keys.txt`, `keys_trollllm.txt`, `tk gmail.txt`, `*.done.txt`.
-
-Kiểm tra nhanh trước khi commit:
-
-```bash
-git status            # config.json KHÔNG được xuất hiện trong danh sách sẽ commit
-git check-ignore config.json   # phải in ra "config.json" (tức đang bị ignore)
-```
-
-Nếu lỡ commit key, hãy **thu hồi/đổi key ngay** — coi như key đó đã lộ.
-
 ---
 
 *Made with care for the game localization community.* — **PS5VietHoa**
