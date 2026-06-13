@@ -45,8 +45,16 @@ Các loại event: `progress`, `batch_init`, `batch` (state: queued/running/done
 
 Map lỗi (`Provider._raise_for_status`): 429/rate/quota → `RateLimit` (cooldown 60s), 401/403 → `DeadKey` (loại key), 5xx/408 → `Transient` (cooldown 8s, retry).
 
+**Tương thích router/model:** OpenAI body luôn gửi `stream: false` — nhiều router (vd 9Router `localhost:20128`) MẶC ĐỊNH trả SSE (`text/event-stream`) làm `r.json()` hỏng (`no_json`). `temperature` chỉ gửi khi khác `None`: model suy luận (gpt-5/codex/o-series) trả `400 Unsupported parameter: 'temperature'`. Cờ `send_temperature` (config + checkbox "temperature:" ở tab API, mặc định bật) → `make_provider` đặt `temperature=None` để `build_body` bỏ field. `test_connection` nhận diện lỗi này và gợi ý bỏ tích.
+
 ### Threading
 `app.py` chạy `engine.run_translation(cfg, emit, stop)` trong **một `OrchestratorThread(QThread)`**; bên trong engine vẫn dùng `ThreadPoolExecutor(max_workers=workers)`. **Stop = `threading.Event`** chia sẻ giữa UI và engine. Tác vụ API ngắn ở tab API (test connection, list models, gen prompt) chạy qua `FnThread` để không đơ UI.
+
+### Dịch cả thư mục (folder mode)
+Tab DỊCH có công tắc **File đơn / Cả thư mục** (`rb_mode_file`/`rb_mode_folder`). Chế độ thư mục: `src`/`out` là THƯ MỤC, thêm ô **đuôi file** (`ed_ext`, cách nhau dấu cách/phẩy; trống = mọi file). `_gather_cfg` thêm `mode` (`'file'`/`'folder'`) + `exts` (chuỗi thô); lưu vào `config.json`. `OrchestratorThread.run` branch: `mode=='folder'` → `engine.run_folder_translation`, ngược lại `run_translation`.
+- **`run_folder_translation(cfg, emit, stop)`**: `list_folder_files(folder, exts)` (đệ quy, sort, bỏ file/thư mục ẩn + artifact `.done.txt`/`.tmp`) → mỗi file là **một `TranslationRun`** với `src/out` per-file (giữ NGUYÊN cây thư mục dưới `out`), **dùng CHUNG 1 provider** (truyền `provider=` vào `TranslationRun.__init__` → tái dùng pool httpx, KHÔNG tạo lại mỗi file). Resume per-file dùng lại nguyên cơ chế (output từng file là nguồn chân lý).
+- **finished từng file bị "nuốt"**: `file_emit` chặn event `finished` của mỗi `TranslationRun` (gom vào `agg`), gắn tên file vào `log`, và chỉ phát **MỘT** `finished` tổng kết ở cuối. Event mới: `folder_init {n_files,exts}`, `folder_file {index,total,name,state:start|done,...}` → cập nhật `lbl_folder` (tiến độ cấp thư mục); thanh/lưới/thẻ vẫn là tiến độ FILE hiện tại (reset mỗi file qua `batch_init`).
+- **UI off-thread**: `_update_resume` ở chế độ thư mục gọi `folder_overview` (chỉ `os.walk` + `os.path.isfile`, KHÔNG đọc nội dung) để đếm nhanh số file khớp/đã có kết quả. `default_out_folder` gợi ý `<tên>_vi`. Test: `tests/test_engine.py` mục `[8]` (monkeypatch `E.make_provider` → MockProvider).
 
 ### Trực quan hóa (tab Dịch)
 `BatchGridWidget` (custom QWidget + QPainter) vẽ lưới ô màu từng lô — QPainter vì có thể hàng trăm/nghìn lô, update cục bộ. Kèm `StatCard`, bảng worker (`QTableWidget`), log coalesced (buffer + `QTimer` 120ms).

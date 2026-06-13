@@ -8,9 +8,12 @@
   "models": [
     "claude-sonnet-4-6"
   ],
+  "model_prompt": "",
+  "model_translate": "",
   "auto_switch": false,
   "max_tokens": 8192,
   "temperature": 0.3,
+  "send_temperature": true,
   "timeout": 180,
   "workers": 8,
   "maxlines": 50,
@@ -19,6 +22,8 @@
   "rounds": 6,
   "src": "",
   "out": "",
+  "mode": "file",
+  "exts": "",
   "sysprompt_path": "system_prompt.txt",
   "lang": "vi"
 }

@@ -61,6 +61,8 @@ up = E.build_user_prompt([{'id':0,'en':'Start','placeholders':[]}])
 check('build_user_prompt nhúng JSON', '[{"id": 0' in up)
 s = E.sample_for_prompt([('K%d'%i,'line %d here'%i) for i in range(500)], max_lines=20)
 check('sample_for_prompt rải đều', len(s.split('\n')) == 20)
+check('read_text path thư mục -> rỗng (không crash)', E.read_text(os.path.dirname(os.path.abspath(__file__))) == '')
+check('resume_status path thư mục -> total 0', E.resume_status(os.path.dirname(os.path.abspath(__file__)), '') == {'total':0,'done':0,'todo':0})
 
 # ---------------------------------------------------------------------------
 print('\n[2] Provider builders (không gọi mạng)')
@@ -70,6 +72,16 @@ check('OpenAI header Bearer', op.headers('K') == {'Authorization': 'Bearer K'})
 ob = op.build_body('m', 'SYS', 'USR')
 check('OpenAI body messages', ob['messages'][0]['role']=='system' and ob['messages'][1]['content']=='USR')
 check('OpenAI body max_tokens', 'max_tokens' in ob)
+check('OpenAI body stream=False (router mặc định SSE -> ép tắt)', ob.get('stream') is False)
+check('OpenAI có temperature khi đặt', ob.get('temperature') == op.temperature)
+_opn = E.OpenAIProvider('https://x.y'); _opn.temperature = None
+check('OpenAI BỎ temperature khi None (model codex/o-series)', 'temperature' not in _opn.build_body('m', 's', 'u'))
+_apn = E.AnthropicProvider('https://x'); _apn.temperature = None
+check('Anthropic BỎ temperature khi None', 'temperature' not in _apn.build_body('m', 's', 'u'))
+check('make_provider send_temperature=False -> temp None',
+      E.make_provider({'provider': 'openai', 'base_url': 'http://x', 'send_temperature': False}).temperature is None)
+check('make_provider mặc định vẫn gửi temperature',
+      E.make_provider({'provider': 'openai', 'base_url': 'http://x', 'temperature': 0.5}).temperature == 0.5)
 check('OpenAI parse_content', op.parse_content({'choices':[{'message':{'content':'hi'}}]}) == 'hi')
 check('OpenAI parse_models', op.parse_models({'data':[{'id':'b'},{'id':'a'}]}) == ['a','b'])
 
@@ -274,6 +286,87 @@ try:
     check('preview rows resident', len(rows) == 9 and stt['total'] == 9 and stt['bad'] == 0, str(stt))
 finally:
     shutil.rmtree(workr, ignore_errors=True)
+
+# ---------------------------------------------------------------------------
+print('\n[8] Dịch cả thư mục (folder) — đa file, đa định dạng')
+# norm_exts: chuẩn hóa chuỗi/list đuôi file
+check('norm_exts trống -> None', E.norm_exts('') is None and E.norm_exts(None) is None)
+check('norm_exts chuỗi hỗn hợp', E.norm_exts('.txt, json *.csv') == {'.txt', '.json', '.csv'})
+check('norm_exts list', E.norm_exts(['TXT', '.Json']) == {'.txt', '.json'})
+check('default_out_folder song song _vi', E.default_out_folder('/a/b/text_en') == '/a/b/text_en_vi')
+check('default_out_folder bỏ / cuối', E.default_out_folder('/a/b/text_en/') == '/a/b/text_en_vi')
+
+workf = tempfile.mkdtemp(prefix='dich_folder_')
+try:
+    # cây thư mục: 2 file .txt (1 ở thư mục con), 1 file .json, 1 file .md (bỏ qua khi lọc .txt)
+    os.makedirs(os.path.join(workf, 'src', 'sub'))
+    open(os.path.join(workf, 'src', 'a.txt'), 'w', encoding='utf-8').write('K1=Hello world here\nK2=Press {0} now\n')
+    open(os.path.join(workf, 'src', 'sub', 'b.txt'), 'w', encoding='utf-8').write('M1=Another line of text\n')
+    open(os.path.join(workf, 'src', 'c.json'), 'w', encoding='utf-8').write('J1=Some json style value\n')
+    open(os.path.join(workf, 'src', 'note.md'), 'w', encoding='utf-8').write('D1=Ignore me please now\n')
+    open(os.path.join(workf, 'src', 'a.txt.done.txt'), 'w', encoding='utf-8').write('K1\n')   # artifact -> bỏ
+    src_dir = os.path.join(workf, 'src')
+
+    files = E.list_folder_files(src_dir)
+    check('list_folder_files bỏ artifact .done.txt', 'a.txt.done.txt' not in files)
+    check('list_folder_files đệ quy + sort', files == ['a.txt', 'c.json', 'note.md', os.path.join('sub', 'b.txt')], str(files))
+    only_txt = E.list_folder_files(src_dir, '.txt')
+    check('list_folder_files lọc .txt', only_txt == ['a.txt', os.path.join('sub', 'b.txt')], str(only_txt))
+    check('list_folder_files path không phải thư mục -> []', E.list_folder_files(os.path.join(src_dir, 'a.txt')) == [])
+
+    out_dir = os.path.join(workf, 'src_vi')
+    ov0 = E.folder_overview(src_dir, out_dir, '.txt')
+    check('folder_overview ban đầu have_out=0', ov0 == {'files': 2, 'have_out': 0}, str(ov0))
+
+    # end-to-end: dịch chỉ .txt bằng MockProvider (monkeypatch make_provider)
+    _orig_make = E.make_provider
+    E.make_provider = lambda cfg: MockProvider()
+    try:
+        evts = []
+        E.run_folder_translation(dict(src=src_dir, out=out_dir, exts='.txt', keys=['k'], model='m',
+                                      models=['m'], workers=4, maxlines=5, maxchars=8000, retries=2,
+                                      rounds=3, max_tokens=8192, temperature=0.3, timeout=30, sysprompt='T'),
+                                 evts.append, threading.Event())
+    finally:
+        E.make_provider = _orig_make
+
+    fin = [e for e in evts if e['type'] == 'finished']
+    check('folder finished ok', fin and fin[-1]['status'] == 'ok' and len(fin) == 1, str(fin))
+    check('folder finished 2/2 file', fin and fin[-1]['done'] == 2 and fin[-1]['total'] == 2, str(fin[-1] if fin else None))
+    check('có folder_init', any(e['type'] == 'folder_init' and e['n_files'] == 2 for e in evts))
+    check('có folder_file start+done', sum(1 for e in evts if e['type'] == 'folder_file') == 4)
+    # output đúng cây thư mục + chỉ .txt được dịch
+    check('output a.txt tồn tại', os.path.isfile(os.path.join(out_dir, 'a.txt')))
+    check('output sub/b.txt giữ cây thư mục', os.path.isfile(os.path.join(out_dir, 'sub', 'b.txt')))
+    check('KHÔNG dịch c.json (lọc .txt)', not os.path.isfile(os.path.join(out_dir, 'c.json')))
+    res_a = open(os.path.join(out_dir, 'a.txt'), encoding='utf-8').read()
+    check('a.txt dịch có VI_', 'K1=VI_Hello world here' in res_a)
+    check('a.txt giữ placeholder', 'K2=Press {0} now' in res_a)
+    ov1 = E.folder_overview(src_dir, out_dir, '.txt')
+    check('folder_overview sau dịch have_out=2', ov1 == {'files': 2, 'have_out': 2}, str(ov1))
+
+    # resume: chạy lại -> vẫn ok, không lỗi (file đã xong nhận diện qua output)
+    E.make_provider = lambda cfg: MockProvider()
+    try:
+        evts2 = []
+        E.run_folder_translation(dict(src=src_dir, out=out_dir, exts='txt', keys=['k'], model='m',
+                                      models=['m'], workers=4, maxlines=5, maxchars=8000, retries=2,
+                                      rounds=3, max_tokens=8192, temperature=0.3, timeout=30, sysprompt='T'),
+                                 evts2.append, threading.Event())
+    finally:
+        E.make_provider = _orig_make
+    fin2 = [e for e in evts2 if e['type'] == 'finished']
+    check('folder resume vẫn ok 2/2', fin2 and fin2[-1]['status'] == 'ok' and fin2[-1]['done'] == 2, str(fin2[-1] if fin2 else None))
+
+    # thư mục rỗng (không khớp đuôi) -> finished error, không tạo file
+    evtsE = []
+    E.run_folder_translation(dict(src=src_dir, out=os.path.join(workf, 'none_vi'), exts='.xml',
+                                  keys=['k'], model='m', models=['m'], workers=2, sysprompt='T'),
+                             evtsE.append, threading.Event())
+    finE = [e for e in evtsE if e['type'] == 'finished']
+    check('folder không file khớp -> error', finE and finE[-1]['status'] == 'error', str(finE[-1] if finE else None))
+finally:
+    shutil.rmtree(workf, ignore_errors=True)
 
 # ---------------------------------------------------------------------------
 print('\n%s  PASS=%d  FAIL=%d' % ('='*40, PASS, FAIL))

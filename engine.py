@@ -69,7 +69,7 @@ RE_REDACT = re.compile(r'\[[A-Z0-9 _\-]{2,}\]')
 _PH_RE = re.compile(r'<[^>]*>|\{[^}]*\}|%[sdfSDF]|\\[nrt]')   # '<[^>]*>' bắt cả '<>' để gợi ý cho AI
 
 def read_text(p):
-    return open(p, encoding='utf-8-sig').read() if (p and os.path.exists(p)) else ''
+    return open(p, encoding='utf-8-sig').read() if (p and os.path.isfile(p)) else ''   # isfile: path thư mục -> '' (không crash)
 
 def extract_placeholders(text):
     seen = []
@@ -335,10 +335,14 @@ class OpenAIProvider(Provider):
     def endpoint(self): return _join_v1(self.base_url, '/chat/completions')
     def headers(self, key): return {'Authorization': 'Bearer ' + key}
     def build_body(self, model, system, user):
-        return {'model': model,
+        body = {'model': model,
                 'messages': [{'role': 'system', 'content': system},
                              {'role': 'user', 'content': user}],
-                'temperature': self.temperature, 'max_tokens': self.max_tokens}
+                'max_tokens': self.max_tokens,
+                'stream': False}   # ÉP non-stream: nhiều router (vd 9Router) MẶC ĐỊNH trả SSE -> r.json() hỏng
+        if self.temperature is not None:   # model gpt-5/codex/o-series từ chối 'temperature' -> cho phép bỏ
+            body['temperature'] = self.temperature
+        return body
     def parse_content(self, j):
         try: return j['choices'][0]['message']['content']
         except Exception: raise Transient('no_content: ' + json.dumps(j)[:150])
@@ -352,9 +356,11 @@ class AnthropicProvider(Provider):
     def headers(self, key):
         return {'x-api-key': key, 'anthropic-version': '2023-06-01'}
     def build_body(self, model, system, user):
-        return {'model': model, 'max_tokens': self.max_tokens, 'system': system,
-                'messages': [{'role': 'user', 'content': user}],
-                'temperature': self.temperature}
+        body = {'model': model, 'max_tokens': self.max_tokens, 'system': system,
+                'messages': [{'role': 'user', 'content': user}]}
+        if self.temperature is not None:
+            body['temperature'] = self.temperature
+        return body
     def parse_content(self, j):
         try:
             blocks = j['content']
@@ -367,8 +373,10 @@ class AnthropicProvider(Provider):
 def make_provider(cfg):
     cls = {'openai': OpenAIProvider, 'anthropic': AnthropicProvider}.get(cfg.get('provider', 'openai'), OpenAIProvider)
     max_conns = max(8, int(cfg.get('workers', 8)) + 4)   # pool đủ cho số luồng song song
+    # send_temperature=False -> KHÔNG gửi 'temperature' (model gpt-5/codex/o-series từ chối tham số này)
+    temp = cfg.get('temperature', 0.3) if cfg.get('send_temperature', True) else None
     return cls(cfg.get('base_url', ''), cfg.get('max_tokens', 8192),
-               cfg.get('temperature', 0.3), cfg.get('timeout', 180), max_conns)
+               temp, cfg.get('timeout', 180), max_conns)
 
 # ============================== TIỆN ÍCH CẤP CAO ==============================
 # (provider tạm dùng 1 lần -> đóng client httpx sau khi xong)
@@ -386,7 +394,10 @@ def test_connection(provider, key, model):
     except DeadKey as e:
         return False, 'API key không hợp lệ (401/403): %s' % str(e)[:100]
     except Transient as e:
-        return False, 'Lỗi tạm thời (sẽ retry khi dịch): %s' % str(e)[:100]
+        s = str(e)
+        if 'temperature' in s.lower() and ('support' in s.lower() or 'unsupported' in s.lower()):
+            return False, "Model KHÔNG nhận tham số 'temperature'. Hãy BỎ TÍCH ô 'temperature' ở tab API rồi thử lại."
+        return False, 'Lỗi tạm thời (sẽ retry khi dịch): %s' % s[:100]
     except Exception as e:
         return False, str(e)[:120]
     finally:
@@ -475,12 +486,62 @@ def build_preview_rows(src, out):
             done += status == 0; pending += status == 1; bad += status == 2
     return rows, {'total': done + pending + bad, 'done': done, 'pending': pending, 'bad': bad}
 
+# ============================== DỊCH CẢ THƯ MỤC (helper thuần) ==============================
+# Dịch mọi file khớp đuôi trong 1 thư mục -> thư mục song song '<tên>_vi' (giữ cây thư mục).
+# Mỗi file dùng lại TranslationRun + resume per-file (output từng file là nguồn chân lý).
+_SKIP_SUFFIX = ('.done.txt', '.tmp')   # artifact do tool sinh ra -> KHÔNG coi là file nguồn
+
+def norm_exts(exts):
+    """Chuẩn hóa đuôi file -> set('.txt','.json',...) chữ thường. Rỗng/None -> None (mọi file).
+    Nhận chuỗi ('.txt .json' / 'txt,json' / '*.txt') hoặc list/set; tự thêm '.', bỏ '*'."""
+    if exts is None: return None
+    parts = re.split(r'[,\s]+', exts.strip()) if isinstance(exts, str) else list(exts)
+    out = set()
+    for p in parts:
+        p = str(p).strip().lstrip('*').lower()
+        if not p: continue
+        if not p.startswith('.'): p = '.' + p
+        out.add(p)
+    return out or None
+
+def list_folder_files(folder, exts=None):
+    """Liệt kê file trong folder (ĐỆ QUY) khớp đuôi 'exts' -> list đường dẫn TƯƠNG ĐỐI (đã sort).
+    Bỏ file/thư mục ẩn và artifact (.done.txt/.tmp). KHÔNG đọc nội dung (chỉ duyệt tên -> nhanh)."""
+    if not folder or not os.path.isdir(folder): return []
+    exts = norm_exts(exts)
+    out = []
+    for root, dirs, files in os.walk(folder):
+        dirs[:] = sorted(d for d in dirs if not d.startswith('.'))   # bỏ thư mục ẩn + duyệt ổn định
+        for fn in sorted(files):
+            if fn.startswith('.'): continue
+            low = fn.lower()
+            if any(low.endswith(s) for s in _SKIP_SUFFIX): continue
+            if exts is not None and os.path.splitext(low)[1] not in exts: continue
+            out.append(os.path.relpath(os.path.join(root, fn), folder))
+    return out
+
+def default_out_folder(src_folder):
+    """Gợi ý thư mục kết quả song song: '/a/b/text_en' -> '/a/b/text_en_vi'."""
+    s = (src_folder or '').rstrip('/\\')
+    return (s + '_vi') if s else ''
+
+def folder_overview(folder, out_folder, exts=None):
+    """Đếm NHANH cho UI (KHÔNG đọc nội dung): {files, have_out}.
+    files = số file khớp đuôi; have_out = số file đã có kết quả tương ứng ở thư mục đích."""
+    files = list_folder_files(folder, exts)
+    have = 0
+    if out_folder:
+        for rel in files:
+            if os.path.isfile(os.path.join(out_folder, rel)): have += 1
+    return {'files': len(files), 'have_out': have}
+
 # ============================== ORCHESTRATOR ĐA LUỒNG ==============================
 class TranslationRun:
-    """Điều phối dịch đa luồng. Phát sự kiện qua emit(evt: dict). stop = threading.Event."""
-    def __init__(self, cfg, emit, stop):
+    """Điều phối dịch đa luồng. Phát sự kiện qua emit(evt: dict). stop = threading.Event.
+    provider: truyền sẵn để DÙNG CHUNG (vd dịch cả thư mục) -> tái dùng pool httpx; None -> tự tạo."""
+    def __init__(self, cfg, emit, stop, provider=None):
         self.cfg = cfg; self.emit = emit; self.stop = stop
-        self.provider = make_provider(cfg)
+        self.provider = provider if provider is not None else make_provider(cfg)
         self.sys_p = build_system_prompt(cfg)
         self.models = cfg.get('models') or [cfg.get('model', '')]
         self.models = [m for m in self.models if m]
@@ -683,3 +744,71 @@ def run_translation(cfg, emit, stop):
         if run is not None:
             try: run.provider.close()      # đóng connection pool httpx
             except Exception: pass
+
+def run_folder_translation(cfg, emit, stop):
+    """Điểm vào engine cho chế độ THƯ MỤC. Dịch mọi file khớp đuôi trong cfg['src'] (thư mục)
+    -> cfg['out'] (thư mục song song), GIỮ NGUYÊN cây thư mục. Mỗi file = 1 TranslationRun
+    (resume per-file). Dùng CHUNG 1 provider cho mọi file (tái dùng pool httpx).
+    Sự kiện thêm: folder_init {n_files,exts}, folder_file {index,total,name,state,...}.
+    finished CỦA TỪNG FILE được nuốt lại -> chỉ phát MỘT finished tổng kết ở cuối."""
+    folder = cfg.get('src', ''); out_folder = cfg.get('out', '')
+    exts = norm_exts(cfg.get('exts'))
+    if not folder or not os.path.isdir(folder):
+        emit({'type': 'finished', 'status': 'error', 'total': 0, 'done': 0, 'bad': 0,
+              'msg': 'Thư mục nguồn không hợp lệ.'}); return
+    if not out_folder:
+        emit({'type': 'finished', 'status': 'error', 'total': 0, 'done': 0, 'bad': 0,
+              'msg': 'Chưa chọn thư mục kết quả.'}); return
+    files = list_folder_files(folder, exts)
+    emit({'type': 'folder_init', 'n_files': len(files), 'exts': sorted(exts) if exts else []})
+    if not files:
+        emit({'type': 'finished', 'status': 'error', 'total': 0, 'done': 0, 'bad': 0,
+              'msg': 'Không tìm thấy file nào khớp đuôi đã chọn trong thư mục.'}); return
+    emit({'type': 'log', 'msg': '=== DỊCH THƯ MỤC === %d file | đuôi: %s -> %s'
+          % (len(files), (' '.join(sorted(exts)) if exts else 'tất cả'), out_folder)})
+    provider = make_provider(cfg)               # 1 provider dùng chung cho mọi file
+    agg = {'files': len(files), 'files_done': 0, 'bad': 0, 'errors': 0}
+    try:
+        for idx, rel in enumerate(files):
+            if stop.is_set(): break
+            src_path = os.path.join(folder, rel); out_path = os.path.join(out_folder, rel)
+            try:
+                os.makedirs(os.path.dirname(out_path) or '.', exist_ok=True)
+            except Exception as e:
+                emit({'type': 'log', 'msg': '!! Bỏ qua %s (không tạo được thư mục đích: %s)' % (rel, e)})
+                agg['errors'] += 1; continue
+            emit({'type': 'folder_file', 'index': idx, 'total': len(files), 'name': rel,
+                  'state': 'start', 'files_done': agg['files_done']})
+            file_cfg = dict(cfg); file_cfg['src'] = src_path; file_cfg['out'] = out_path
+            captured = {}
+            def file_emit(evt):
+                t = evt.get('type')
+                if t == 'finished':                          # nuốt finished từng file (gom vào agg)
+                    captured.clear(); captured.update(evt); return
+                if t == 'log':                               # gắn tên file vào log để dễ theo dõi
+                    evt = {**evt, 'msg': '[%s] %s' % (rel, evt.get('msg', ''))}
+                emit(evt)
+            try:
+                TranslationRun(file_cfg, file_emit, stop, provider=provider).run()
+            except Exception as e:
+                emit({'type': 'log', 'msg': '!! LỖI ở %s: %s' % (rel, str(e)[:120])})
+                captured = {'status': 'error'}
+            agg['bad'] += captured.get('bad', 0)
+            st = captured.get('status')
+            if st == 'ok': agg['files_done'] += 1
+            elif st == 'error': agg['errors'] += 1
+            emit({'type': 'folder_file', 'index': idx, 'total': len(files), 'name': rel,
+                  'state': 'done', 'file_status': st or 'stopped', 'files_done': agg['files_done']})
+    finally:
+        try: provider.close()
+        except Exception: pass
+    if stop.is_set():
+        emit({'type': 'finished', 'status': 'stopped', 'total': agg['files'], 'done': agg['files_done'],
+              'bad': agg['bad'], 'msg': 'Đã dừng — %d/%d file xong (mở lại bấm Bắt đầu để dịch tiếp).'
+              % (agg['files_done'], agg['files'])})
+    else:
+        status = 'ok' if agg['errors'] == 0 else 'error'
+        extra = (', %d file lỗi' % agg['errors']) if agg['errors'] else ''
+        emit({'type': 'finished', 'status': status, 'total': agg['files'], 'done': agg['files_done'],
+              'bad': agg['bad'], 'msg': 'HOÀN TẤT THƯ MỤC — %d/%d file xong, %d dòng nghi lỗi%s.'
+              % (agg['files_done'], agg['files'], agg['bad'], extra)})

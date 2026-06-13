@@ -152,6 +152,14 @@ TR = {
     'keys_ph': {'vi': 'Dán API key, mỗi dòng 1 key (xoay vòng khi nhiều key)...',
                 'en': 'Paste API keys, one per line (rotated when multiple)...'},
     'model_label': {'vi': 'Model:', 'en': 'Model:'},
+    'model_default_label': {'vi': 'Model mặc định:', 'en': 'Default model:'},
+    'model_prompt_label': {'vi': 'Model tạo prompt:', 'en': 'Prompt model:'},
+    'model_translate_label': {'vi': 'Model dịch:', 'en': 'Translate model:'},
+    'model_default_item': {'vi': '(Theo mặc định)', 'en': '(Default)'},
+    'model_sel_tip': {'vi': 'Để "(Theo mặc định)" sẽ dùng Model mặc định ở tab API. '
+                            'Chọn model cụ thể nếu muốn tab này dùng model khác.',
+                      'en': 'Keep "(Default)" to use the Default model from the API tab. '
+                            'Pick a specific model to override it for this tab.'},
     'model_ph': {'vi': 'Chọn từ danh sách hoặc gõ tên model...',
                  'en': 'Pick from the list or type a model name...'},
     'btn_fetch_models': {'vi': 'Lấy danh sách model', 'en': 'Fetch model list'},
@@ -161,6 +169,10 @@ TR = {
                               'Bật: khi model chính lỗi/hết quota, tự xoay sang các model khác trong danh sách.',
                         'en': 'Off: translate only with the selected model; on quota it waits and retries the same model.\n'
                               'On: when the main model errors/runs out, auto-rotate to other models in the list.'},
+    'send_temp_tip': {'vi': "Bỏ tích nếu model KHÔNG nhận tham số 'temperature' "
+                            "(các model suy luận như gpt-5 / codex / o-series) — tool sẽ không gửi 'temperature'.",
+                      'en': "Uncheck if the model does NOT accept 'temperature' "
+                            "(reasoning models like gpt-5 / codex / o-series) — the tool won't send 'temperature'."},
     'timeout_label': {'vi': 'timeout (giây):', 'en': 'timeout (sec):'},
     'workers_label': {'vi': 'Số luồng:', 'en': 'Threads:'},
     'lines_label': {'vi': 'Dòng/lô:', 'en': 'Lines/batch:'},
@@ -209,8 +221,30 @@ TR = {
     'dlg_prompt_saved_m': {'vi': 'System prompt đã lưu:\n%s', 'en': 'System prompt saved:\n%s'},
     'fd_load_prompt': {'vi': 'Tải prompt', 'en': 'Load prompt'},
     # -- tab DỊCH --
+    'tr_mode': {'vi': 'Chế độ:', 'en': 'Mode:'},
+    'mode_file': {'vi': 'File đơn', 'en': 'Single file'},
+    'mode_folder': {'vi': 'Cả thư mục', 'en': 'Whole folder'},
     'src_file': {'vi': 'File ENG gốc:', 'en': 'Source ENG file:'},
     'out_file': {'vi': 'File dịch (kết quả):', 'en': 'Output file (result):'},
+    'src_folder': {'vi': 'Thư mục nguồn:', 'en': 'Source folder:'},
+    'out_folder': {'vi': 'Thư mục kết quả:', 'en': 'Output folder:'},
+    'ext_label': {'vi': 'Đuôi file:', 'en': 'Extensions:'},
+    'ext_ph': {'vi': 'vd: .txt .json  (để trống = mọi file)', 'en': 'e.g. .txt .json  (empty = all files)'},
+    'ext_tip': {'vi': 'Chỉ dịch file có đuôi này (cách nhau bởi dấu cách hoặc phẩy). '
+                      'Để TRỐNG = dịch mọi file trong thư mục (đệ quy cả thư mục con).',
+                'en': 'Only translate files with these extensions (space/comma separated). '
+                      'Leave EMPTY = translate every file in the folder (recursively).'},
+    'ext_all': {'vi': 'tất cả', 'en': 'all'},
+    'dlg_no_src_folder': {'vi': 'Chưa chọn Thư mục nguồn hợp lệ.', 'en': 'No valid source folder selected.'},
+    'dlg_no_out_folder': {'vi': 'Chưa chọn Thư mục kết quả.', 'en': 'No output folder selected.'},
+    'fd_pick_folder': {'vi': 'Chọn thư mục', 'en': 'Select folder'},
+    'folder_none': {'vi': 'Không tìm thấy file nào khớp đuôi trong thư mục.',
+                    'en': 'No files matching the extensions in this folder.'},
+    'folder_overview': {'vi': 'Tìm thấy %d file — %d file đã có kết quả ở thư mục đích.',
+                        'en': 'Found %d files — %d already have output in the target folder.'},
+    'folder_starting': {'vi': 'Đang quét thư mục...', 'en': 'Scanning folder...'},
+    'folder_init': {'vi': 'Thư mục: %d file (đuôi: %s)', 'en': 'Folder: %d files (ext: %s)'},
+    'folder_progress': {'vi': 'File %d/%d: %s', 'en': 'File %d/%d: %s'},
     'btn_start': {'vi': 'BẮT ĐẦU DỊCH', 'en': 'START TRANSLATING'},
     'btn_stop': {'vi': 'DỪNG', 'en': 'STOP'},
     'card_translated': {'vi': 'Đã dịch', 'en': 'Translated'},
@@ -308,6 +342,7 @@ def _guide_data(lang):
             ]),
             ('Pick files & start  —  TRANSLATE tab', [
                 "Pick the <b>Source ENG file</b>; the tool suggests an <b>Output file</b> name (adds _VI).",
+                "<b>Whole folder</b> mode: pick a source folder + optional <b>extensions</b> (e.g. .txt .json; empty = all) → it translates every matching file (recursively) into a parallel <b>_vi</b> folder, keeping the tree.",
                 "Click <b>START TRANSLATING</b>. You can press <b>STOP</b> anytime.",
                 "It <b>saves as it goes</b> — close and reopen, press Start to <b>continue</b>.",
             ]),
@@ -380,6 +415,7 @@ def _guide_data(lang):
             ]),
             ('Chọn file & bắt đầu dịch  —  tab DỊCH', [
                 "Chọn <b>File ENG gốc</b>; tool tự gợi ý tên <b>File dịch</b> (thêm hậu tố _VI).",
+                "Chế độ <b>Cả thư mục</b>: chọn thư mục nguồn + <b>đuôi file</b> (vd .txt .json; trống = mọi file) → dịch mọi file khớp (đệ quy cả thư mục con) sang thư mục song song <b>_vi</b>, giữ nguyên cây thư mục.",
                 "Bấm <b>BẮT ĐẦU DỊCH</b>. Có thể bấm <b>DỪNG</b> bất cứ lúc nào.",
                 "Dịch tới đâu <b>lưu tới đó</b> — tắt rồi mở lại bấm Bắt đầu sẽ <b>chạy tiếp</b>.",
             ]),
@@ -458,23 +494,30 @@ class EngineBridge(QObject):
     sig_log        = pyqtSignal(str)
     sig_stats      = pyqtSignal(dict)
     sig_finished   = pyqtSignal(dict)
+    sig_folder_init = pyqtSignal(dict)
+    sig_folder_file = pyqtSignal(dict)
 
     def emit_event(self, evt):
         t = evt.get('type')
-        if   t == 'progress':   self.sig_progress.emit(evt)
-        elif t == 'batch_init': self.sig_batch_init.emit(evt)
-        elif t == 'batch':      self.sig_batch.emit(evt)
-        elif t == 'worker':     self.sig_worker.emit(evt)
-        elif t == 'log':        self.sig_log.emit(evt.get('msg', ''))
-        elif t == 'stats':      self.sig_stats.emit(evt)
-        elif t == 'finished':   self.sig_finished.emit(evt)
+        if   t == 'progress':    self.sig_progress.emit(evt)
+        elif t == 'batch_init':  self.sig_batch_init.emit(evt)
+        elif t == 'batch':       self.sig_batch.emit(evt)
+        elif t == 'worker':      self.sig_worker.emit(evt)
+        elif t == 'log':         self.sig_log.emit(evt.get('msg', ''))
+        elif t == 'stats':       self.sig_stats.emit(evt)
+        elif t == 'finished':    self.sig_finished.emit(evt)
+        elif t == 'folder_init': self.sig_folder_init.emit(evt)
+        elif t == 'folder_file': self.sig_folder_file.emit(evt)
 
 
 class OrchestratorThread(QThread):
     def __init__(self, cfg, bridge, stop_event):
         super().__init__(); self.cfg = cfg; self.bridge = bridge; self.stop = stop_event
     def run(self):
-        E.run_translation(self.cfg, self.bridge.emit_event, self.stop)
+        if self.cfg.get('mode') == 'folder':          # dịch cả thư mục (đa file)
+            E.run_folder_translation(self.cfg, self.bridge.emit_event, self.stop)
+        else:
+            E.run_translation(self.cfg, self.bridge.emit_event, self.stop)
 
 
 class FnThread(QThread):
@@ -741,15 +784,11 @@ class MainWindow(QMainWindow):
         self.ed_keys.setPlaceholderText(self.t('keys_ph'))
         g.addWidget(self.ed_keys, 1, 1, 1, 3)
 
-        g.addWidget(QLabel(self.t('model_label')), 2, 0)
+        g.addWidget(QLabel(self.t('model_default_label')), 2, 0)
         self.cb_model = QComboBox(); self.cb_model.setEditable(True)
         self.cb_model.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)   # gõ tự do, không tự chèn rác
         self.cb_model.lineEdit().setPlaceholderText(self.t('model_ph'))
-        _cmp = self.cb_model.completer()
-        if _cmp:                                                          # gõ -> gợi ý theo chuỗi con
-            _cmp.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
-            _cmp.setFilterMode(Qt.MatchFlag.MatchContains)
-            _cmp.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        self._init_model_completer(self.cb_model)
         g.addWidget(self.cb_model, 2, 1, 1, 2)
         self.btn_models = QPushButton(self.t('btn_fetch_models')); self.btn_models.clicked.connect(self._fetch_models)
         g.addWidget(self.btn_models, 2, 3)
@@ -759,9 +798,12 @@ class MainWindow(QMainWindow):
         g.addWidget(self.cb_auto_switch, 3, 0, 1, 4)
 
         g.addWidget(QLabel('max_tokens:'), 4, 0)
-        self.sp_maxtok = QSpinBox(); self.sp_maxtok.setRange(256, 32768); self.sp_maxtok.setValue(8192); self.sp_maxtok.setSingleStep(512)
+        self.sp_maxtok = QSpinBox(); self.sp_maxtok.setRange(256, 1000000); self.sp_maxtok.setValue(8192); self.sp_maxtok.setSingleStep(512)
         g.addWidget(self.sp_maxtok, 4, 1)
-        g.addWidget(QLabel('temperature:'), 4, 2)
+        self.cb_send_temp = QCheckBox('temperature:'); self.cb_send_temp.setChecked(True)
+        self.cb_send_temp.setToolTip(self.t('send_temp_tip'))
+        self.cb_send_temp.toggled.connect(lambda on: self.sp_temp.setEnabled(on))
+        g.addWidget(self.cb_send_temp, 4, 2)
         self.sp_temp = QDoubleSpinBox(); self.sp_temp.setRange(0.0, 2.0); self.sp_temp.setSingleStep(0.1); self.sp_temp.setValue(0.3)
         g.addWidget(self.sp_temp, 4, 3)
 
@@ -769,11 +811,11 @@ class MainWindow(QMainWindow):
         self.sp_timeout = QSpinBox(); self.sp_timeout.setRange(15, 600); self.sp_timeout.setValue(180)
         g.addWidget(self.sp_timeout, 5, 1)
         g.addWidget(QLabel(self.t('workers_label')), 5, 2)
-        self.sp_workers = QSpinBox(); self.sp_workers.setRange(1, 40); self.sp_workers.setValue(8)
+        self.sp_workers = QSpinBox(); self.sp_workers.setRange(1, 10000); self.sp_workers.setValue(8)
         g.addWidget(self.sp_workers, 5, 3)
 
         g.addWidget(QLabel(self.t('lines_label')), 6, 0)
-        self.sp_maxlines = QSpinBox(); self.sp_maxlines.setRange(5, 200); self.sp_maxlines.setValue(50)
+        self.sp_maxlines = QSpinBox(); self.sp_maxlines.setRange(5, 1000); self.sp_maxlines.setValue(50)
         g.addWidget(self.sp_maxlines, 6, 1)
         lay.addWidget(grid)
 
@@ -788,6 +830,50 @@ class MainWindow(QMainWindow):
 
     def _on_provider_change(self):
         self.btn_models.setEnabled(self.rb_openai.isChecked())
+
+    # ---------- MODEL SELECTION (mặc định ở tab API; tab Prompt/Dịch override) ----------
+    def _init_model_completer(self, combo):
+        """Completer gõ-gợi-ý theo chuỗi con (dùng chung cho mọi combobox model)."""
+        _cmp = combo.completer()
+        if _cmp:
+            _cmp.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
+            _cmp.setFilterMode(Qt.MatchFlag.MatchContains)
+            _cmp.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+
+    def _make_model_combo(self):
+        """Combobox model phụ (tab Prompt/Dịch): editable, có mục '(Theo mặc định)' ở đầu."""
+        c = QComboBox(); c.setEditable(True)
+        c.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        c.addItem(self.t('model_default_item'))
+        c.lineEdit().setPlaceholderText(self.t('model_default_item'))
+        c.setToolTip(self.t('model_sel_tip'))
+        self._init_model_completer(c)
+        return c
+
+    def _reset_combo(self, combo, items, keep):
+        combo.blockSignals(True)
+        combo.clear(); combo.addItems(items)
+        if keep: combo.setCurrentText(keep)
+        combo.blockSignals(False)
+
+    def _fill_model_combos(self, models):
+        """Đổ danh sách model (đã fetch) vào CẢ 3 combobox, GIỮ lựa chọn hiện tại.
+        API = danh sách thuần; Prompt/Dịch = '(Theo mặc định)' + danh sách."""
+        models = list(models or [])
+        self._reset_combo(self.cb_model, models, self.cb_model.currentText().strip())
+        default_item = self.t('model_default_item')
+        for combo in (self.cb_model_prompt, self.cb_model_tr):
+            self._reset_combo(combo, [default_item] + models, combo.currentText().strip() or default_item)
+
+    def _set_model_combo(self, combo, value):
+        """Đặt giá trị combo phụ: rỗng -> '(Theo mặc định)' (index 0); ngược lại -> model cụ thể."""
+        if value: combo.setCurrentText(value)
+        else: combo.setCurrentIndex(0)
+
+    def _resolve_model(self, combo):
+        """Đọc model từ combo phụ; '' nếu đang để '(Theo mặc định)' (sẽ dùng model mặc định)."""
+        txt = combo.currentText().strip()
+        return '' if (not txt or txt == self.t('model_default_item')) else txt
 
     # ---------- TAB SYSTEM PROMPT ----------
     def _tab_prompt(self):
@@ -804,6 +890,9 @@ class MainWindow(QMainWindow):
         g.addWidget(QLabel(self.t('extra_note')), 3, 0)
         self.ed_note = QLineEdit(); self.ed_note.setPlaceholderText(self.t('note_ph'))
         g.addWidget(self.ed_note, 3, 1, 1, 3)
+        g.addWidget(QLabel(self.t('model_prompt_label')), 4, 0)
+        self.cb_model_prompt = self._make_model_combo()
+        g.addWidget(self.cb_model_prompt, 4, 1, 1, 3)
         lay.addWidget(top)
 
         row = QHBoxLayout()
@@ -825,18 +914,40 @@ class MainWindow(QMainWindow):
     def _tab_translate(self):
         w = QWidget(); lay = QVBoxLayout(w); lay.setSpacing(8)
         files = QFrame(); files.setObjectName('card'); g = QGridLayout(files); g.setContentsMargins(14, 12, 14, 12); g.setSpacing(8)
-        g.addWidget(QLabel(self.t('src_file')), 0, 0)
-        self.ed_src = QLineEdit(); g.addWidget(self.ed_src, 0, 1, 1, 2)
-        b1 = QPushButton(self.t('btn_browse')); b1.clicked.connect(self._pick_src); g.addWidget(b1, 0, 3)
-        g.addWidget(QLabel(self.t('out_file')), 1, 0)
-        self.ed_out = QLineEdit(); g.addWidget(self.ed_out, 1, 1, 1, 2)
-        b2 = QPushButton(self.t('btn_browse')); b2.clicked.connect(lambda: self._pick_into(self.ed_out, save=True)); g.addWidget(b2, 1, 3)
+        # chế độ: File đơn / Cả thư mục
+        mrow = QHBoxLayout(); mrow.setSpacing(14)
+        mrow.addWidget(QLabel(self.t('tr_mode')))
+        self.rb_mode_file = QRadioButton(self.t('mode_file')); self.rb_mode_folder = QRadioButton(self.t('mode_folder'))
+        self.rb_mode_file.setChecked(True)
+        self.mode_group = QButtonGroup(self); self.mode_group.addButton(self.rb_mode_file); self.mode_group.addButton(self.rb_mode_folder)
+        self.rb_mode_folder.toggled.connect(self._on_mode_change)
+        mrow.addWidget(self.rb_mode_file); mrow.addWidget(self.rb_mode_folder); mrow.addStretch(1)
+        g.addLayout(mrow, 0, 0, 1, 4)
+
+        self.lbl_src_cap = QLabel(self.t('src_file')); g.addWidget(self.lbl_src_cap, 1, 0)
+        self.ed_src = QLineEdit(); g.addWidget(self.ed_src, 1, 1, 1, 2)
+        b1 = QPushButton(self.t('btn_browse')); b1.clicked.connect(self._pick_src); g.addWidget(b1, 1, 3)
+        self.lbl_out_cap = QLabel(self.t('out_file')); g.addWidget(self.lbl_out_cap, 2, 0)
+        self.ed_out = QLineEdit(); g.addWidget(self.ed_out, 2, 1, 1, 2)
+        b2 = QPushButton(self.t('btn_browse')); b2.clicked.connect(self._pick_out); g.addWidget(b2, 2, 3)
+        # đuôi file (chỉ hiện ở chế độ thư mục)
+        self.lbl_ext_cap = QLabel(self.t('ext_label')); g.addWidget(self.lbl_ext_cap, 3, 0)
+        self.ed_ext = QLineEdit(); self.ed_ext.setPlaceholderText(self.t('ext_ph')); self.ed_ext.setToolTip(self.t('ext_tip'))
+        g.addWidget(self.ed_ext, 3, 1, 1, 3)
+        self.lbl_ext_cap.setVisible(False); self.ed_ext.setVisible(False)
         self.lbl_resume = QLabel(''); self.lbl_resume.setObjectName('muted')
-        g.addWidget(self.lbl_resume, 2, 1, 1, 3)
+        g.addWidget(self.lbl_resume, 4, 1, 1, 3)
         lay.addWidget(files)
-        # cập nhật mốc đã dịch khi đổi file (ghi nhớ tiến độ -> không dịch lại từ đầu)
+        # cập nhật mốc đã dịch khi đổi file/thư mục/đuôi (ghi nhớ tiến độ -> không dịch lại từ đầu)
         self.ed_src.textChanged.connect(self._update_resume)
         self.ed_out.textChanged.connect(self._update_resume)
+        self.ed_ext.textChanged.connect(self._update_resume)
+
+        mdl = QFrame(); mdl.setObjectName('card'); mh = QHBoxLayout(mdl); mh.setContentsMargins(14, 10, 14, 10); mh.setSpacing(10)
+        mh.addWidget(QLabel(self.t('model_translate_label')))
+        self.cb_model_tr = self._make_model_combo()
+        mh.addWidget(self.cb_model_tr, 1)
+        lay.addWidget(mdl)
 
         ctl = QHBoxLayout()
         self.btn_start = QPushButton(self.t('btn_start')); self.btn_start.setObjectName('primary'); self.btn_start.clicked.connect(self._start)
@@ -851,6 +962,10 @@ class MainWindow(QMainWindow):
         self.card_eta = StatCard(self.t('card_eta')); self.card_err = StatCard(self.t('card_err'))
         for c in (self.card_total, self.card_speed, self.card_eta, self.card_err): cards.addWidget(c)
         lay.addLayout(cards)
+
+        # tiến độ cấp THƯ MỤC (chỉ hiện ở chế độ thư mục); thanh/lưới/thẻ bên dưới là tiến độ FILE hiện tại
+        self.lbl_folder = QLabel(''); self.lbl_folder.setObjectName('muted'); self.lbl_folder.setVisible(False)
+        lay.addWidget(self.lbl_folder)
 
         self.pbar = QProgressBar(); self.pbar.setRange(0, 100); self.pbar.setValue(0); lay.addWidget(self.pbar)
 
@@ -918,7 +1033,7 @@ class MainWindow(QMainWindow):
     def _load_preview(self):
         if self._preview_loading: return
         src = self.ed_src.text().strip(); out = self.ed_out.text().strip()
-        if not os.path.exists(src):
+        if not os.path.isfile(src):
             self.lbl_preview.setText(self.t('pv_no_src'))
             self.preview_model.set_rows([]); self._preview_count = 0; return
         # đọc + parse + đối chiếu Ở THREAD NỀN -> không đơ UI khi file lớn / đang dịch
@@ -1109,9 +1224,10 @@ class MainWindow(QMainWindow):
             with open(CONFIG_PATH, encoding='utf-8') as f: return json.load(f)
         except Exception:
             return {'provider': 'openai', 'base_url': 'https://chat.trollllm.xyz/v1', 'keys': [],
-                    'model': 'claude-sonnet-4-6', 'models': [], 'max_tokens': 8192, 'temperature': 0.3,
+                    'model': 'claude-sonnet-4-6', 'models': [], 'model_prompt': '', 'model_translate': '',
+                    'max_tokens': 8192, 'temperature': 0.3,
                     'timeout': 180, 'workers': 8, 'maxlines': 50, 'maxchars': 8000, 'retries': 5,
-                    'rounds': 6, 'sysprompt_path': 'system_prompt.txt', 'lang': 'vi'}
+                    'rounds': 6, 'mode': 'file', 'exts': '', 'sysprompt_path': 'system_prompt.txt', 'lang': 'vi'}
 
     # ---------- snapshot / restore (giữ ô nhập khi đổi ngôn ngữ -> rebuild) ----------
     def _snapshot_ui(self):
@@ -1128,16 +1244,22 @@ class MainWindow(QMainWindow):
         (self.rb_anthropic if c['provider'] == 'anthropic' else self.rb_openai).setChecked(True)
         self.ed_base.setText(c['base_url'])
         self.ed_keys.setPlainText('\n'.join(c['keys']))
-        self.cb_model.clear(); self.cb_model.addItems(s['model_items']); self.cb_model.setCurrentText(c['model'])
+        self._fill_model_combos(s['model_items'])
+        self.cb_model.setCurrentText(c['model'])
+        self._set_model_combo(self.cb_model_prompt, c.get('model_prompt', ''))
+        self._set_model_combo(self.cb_model_tr, c.get('model_translate', ''))
         self.sp_maxtok.setValue(int(c['max_tokens'])); self.sp_temp.setValue(float(c['temperature']))
+        self.cb_send_temp.setChecked(bool(c.get('send_temperature', True))); self.sp_temp.setEnabled(self.cb_send_temp.isChecked())
         self.sp_timeout.setValue(int(c['timeout'])); self.sp_workers.setValue(int(c['workers']))
         self.sp_maxlines.setValue(int(c['maxlines'])); self.cb_auto_switch.setChecked(bool(c['auto_switch']))
         self.ed_src.setText(c['src']); self.ed_out.setText(c['out'])
+        self.ed_ext.setText(c.get('exts', '') or '')
+        (self.rb_mode_folder if c.get('mode') == 'folder' else self.rb_mode_file).setChecked(True)
         self.ed_game.setText(s['game']); self.ed_sample.setText(s['sample'])
         self.cb_tone.setCurrentIndex(s['tone_idx']); self.ed_note.setText(s['note'])
         self.ed_prompt.setPlainText(c.get('sysprompt', ''))
         self.log.setPlainText(s['log'])
-        self._on_provider_change(); self._update_resume()
+        self._on_provider_change(); self._on_mode_change()
         self.tabs.setCurrentIndex(s['tab'])
 
     def _persist_lang(self):
@@ -1156,38 +1278,51 @@ class MainWindow(QMainWindow):
         self.ed_base.setText(c.get('base_url', ''))
         self.ed_keys.setPlainText('\n'.join(c.get('keys', []) if isinstance(c.get('keys'), list) else []))
         models = c.get('models') or []
-        self.cb_model.clear(); self.cb_model.addItems(models)
-        self.cb_model.setCurrentText(c.get('model', models[0] if models else ''))
+        self._fill_model_combos(models)
+        self.cb_model.setCurrentText(c.get('model', '') or (models[0] if models else ''))
+        self._set_model_combo(self.cb_model_prompt, c.get('model_prompt', ''))
+        self._set_model_combo(self.cb_model_tr, c.get('model_translate', ''))
         self.sp_maxtok.setValue(int(c.get('max_tokens', 8192)))
         self.sp_temp.setValue(float(c.get('temperature', 0.3)))
+        self.cb_send_temp.setChecked(bool(c.get('send_temperature', True))); self.sp_temp.setEnabled(self.cb_send_temp.isChecked())
         self.sp_timeout.setValue(int(c.get('timeout', 180)))
         self.sp_workers.setValue(int(c.get('workers', 8)))
         self.sp_maxlines.setValue(int(c.get('maxlines', 50)))
         self.cb_auto_switch.setChecked(bool(c.get('auto_switch', False)))
         self.ed_src.setText(c.get('src', '')); self.ed_out.setText(c.get('out', ''))
+        self.ed_ext.setText(c.get('exts', '') or '')
+        (self.rb_mode_folder if c.get('mode') == 'folder' else self.rb_mode_file).setChecked(True)
         self._on_provider_change()
-        self._update_resume()       # khởi động: hiện mốc đã dịch của file đã lưu (nếu có)
+        self._on_mode_change()      # đặt nhãn + ẩn/hiện ô đuôi + gọi _update_resume (mốc đã dịch đã lưu)
 
     def _gather_cfg(self):
         keys = [ln.strip() for ln in self.ed_keys.toPlainText().split('\n')
                 if ln.strip() and not ln.strip().startswith('#')]
-        model = self.cb_model.currentText().strip()
+        model = self.cb_model.currentText().strip()        # model MẶC ĐỊNH (tab API)
         all_models = [self.cb_model.itemText(i) for i in range(self.cb_model.count())]
-        # CHỈ dùng model đã chọn; chỉ khi bật "tự đổi model" mới thêm các model dự phòng
+        # tab Prompt/Dịch có thể override; '' = '(Theo mặc định)' -> bám model mặc định
+        model_prompt = self._resolve_model(self.cb_model_prompt) if hasattr(self, 'cb_model_prompt') else ''
+        model_translate = self._resolve_model(self.cb_model_tr) if hasattr(self, 'cb_model_tr') else ''
+        eff_tr = model_translate or model                  # model THỰC dùng khi dịch
+        # CHỈ dùng model đang dùng; chỉ khi bật "tự đổi model" mới thêm các model dự phòng
         if self.cb_auto_switch.isChecked():
-            models = list(dict.fromkeys([model] + all_models)) if model else all_models
+            models = list(dict.fromkeys([eff_tr] + all_models)) if eff_tr else all_models
         else:
-            models = [model] if model else all_models[:1]
+            models = [eff_tr] if eff_tr else all_models[:1]
         return {
             'provider': 'anthropic' if self.rb_anthropic.isChecked() else 'openai',
             'base_url': self.ed_base.text().strip(),
             'keys': keys, 'model': model, 'models': models,
+            'model_prompt': model_prompt, 'model_translate': model_translate,
             'auto_switch': self.cb_auto_switch.isChecked(),
             'max_tokens': self.sp_maxtok.value(), 'temperature': self.sp_temp.value(),
+            'send_temperature': self.cb_send_temp.isChecked(),
             'timeout': self.sp_timeout.value(), 'workers': self.sp_workers.value(),
             'maxlines': self.sp_maxlines.value(), 'maxchars': int(self.cfg.get('maxchars', 8000)),
             'retries': int(self.cfg.get('retries', 5)), 'rounds': int(self.cfg.get('rounds', 6)),
             'src': self.ed_src.text().strip(), 'out': self.ed_out.text().strip(),
+            'mode': 'folder' if self._folder_mode() else 'file',
+            'exts': self.ed_ext.text().strip() if hasattr(self, 'ed_ext') else '',
             'sysprompt': self.ed_prompt.toPlainText().strip(),
             'sysprompt_path': self.cfg.get('sysprompt_path', 'system_prompt.txt'),
             'lang': self.lang,
@@ -1222,9 +1357,7 @@ class MainWindow(QMainWindow):
         if isinstance(r, Exception) or not r:
             self.lbl_api_status.setText(self.t('st_models_fail'))
             self.lbl_api_status.setStyleSheet(f'color:{ORANGE};'); return
-        cur = self.cb_model.currentText()
-        self.cb_model.clear(); self.cb_model.addItems(r)
-        if cur in r: self.cb_model.setCurrentText(cur)
+        self._fill_model_combos(r)      # đổ vào CẢ 3 combobox (API + Prompt + Dịch), giữ lựa chọn
         self.lbl_api_status.setText(self.t('st_models_ok', len(r))); self.lbl_api_status.setStyleSheet(f'color:{GREEN};')
 
     def _test_conn(self):
@@ -1248,11 +1381,12 @@ class MainWindow(QMainWindow):
 
     # ============================== SYSTEM PROMPT ACTIONS ==============================
     def _gen_prompt(self):
-        prov, key, model = self._provider_from_ui()
+        prov, key, default_model = self._provider_from_ui()
+        model = self._resolve_model(self.cb_model_prompt) or default_model   # model tab Prompt (hoặc mặc định)
         if not key:
             QMessageBox.warning(self, self.t('dlg_missing_key_t'), self.t('dlg_need_key_prompt')); return
         sample_file = self.ed_sample.text().strip()
-        if not os.path.exists(sample_file):
+        if not os.path.isfile(sample_file):
             QMessageBox.warning(self, self.t('dlg_missing_file_t'), self.t('dlg_missing_file_m')); return
         pairs = E.parse_doc(E.read_text(sample_file)).pairs
         sample = E.sample_for_prompt(pairs)
@@ -1291,7 +1425,26 @@ class MainWindow(QMainWindow):
              else QFileDialog.getOpenFileName(self, self.t('fd_pick'), os.path.dirname(edit.text()) or BASE)[0])
         if p: edit.setText(p)
 
+    def _folder_mode(self):
+        return getattr(self, 'rb_mode_folder', None) is not None and self.rb_mode_folder.isChecked()
+
+    def _on_mode_change(self):
+        """Đổi chế độ File đơn <-> Cả thư mục: đổi nhãn + hiện/ẩn ô đuôi file."""
+        folder = self._folder_mode()
+        self.lbl_src_cap.setText(self.t('src_folder') if folder else self.t('src_file'))
+        self.lbl_out_cap.setText(self.t('out_folder') if folder else self.t('out_file'))
+        self.lbl_ext_cap.setVisible(folder); self.ed_ext.setVisible(folder)
+        self.lbl_folder.setVisible(folder)
+        self._update_resume()
+
     def _pick_src(self):
+        if self._folder_mode():
+            p = QFileDialog.getExistingDirectory(self, self.t('fd_pick_folder'), self.ed_src.text() or BASE)
+            if not p: return
+            self.ed_src.setText(p)
+            if not self.ed_out.text().strip():
+                self.ed_out.setText(E.default_out_folder(p))
+            return
         p = QFileDialog.getOpenFileName(self, self.t('fd_pick_eng'), os.path.dirname(self.ed_src.text()) or BASE)[0]
         if not p: return
         self.ed_src.setText(p)
@@ -1299,18 +1452,31 @@ class MainWindow(QMainWindow):
             d, f = os.path.split(p); n, ext = os.path.splitext(f)
             self.ed_out.setText(os.path.join(d, n + '_VI' + ext))
 
+    def _pick_out(self):
+        if self._folder_mode():
+            start = self.ed_out.text() or self.ed_src.text() or BASE
+            p = QFileDialog.getExistingDirectory(self, self.t('fd_pick_folder'), start)
+            if p: self.ed_out.setText(p)
+        else:
+            self._pick_into(self.ed_out, save=True)
+
     # ============================== TRANSLATE CONTROL ==============================
     def _start(self):
         cfg = self._gather_cfg()
-        if not os.path.exists(cfg['src']):
+        folder = cfg.get('mode') == 'folder'
+        if folder and not os.path.isdir(cfg['src']):
+            QMessageBox.warning(self, self.t('dlg_err'), self.t('dlg_no_src_folder')); return
+        if not folder and not os.path.isfile(cfg['src']):
             QMessageBox.warning(self, self.t('dlg_err'), self.t('dlg_no_src')); return
         if not cfg['out']:
-            QMessageBox.warning(self, self.t('dlg_err'), self.t('dlg_no_out')); return
+            QMessageBox.warning(self, self.t('dlg_err'), self.t('dlg_no_out_folder') if folder else self.t('dlg_no_out')); return
         if not cfg['keys']:
             QMessageBox.warning(self, self.t('dlg_err'), self.t('dlg_no_key')); return
         if not cfg['models']:
             QMessageBox.warning(self, self.t('dlg_err'), self.t('dlg_no_model')); return
         self._persist_paths(cfg['src'], cfg['out'])   # nhớ đường dẫn để mở lại tự điền
+        self.lbl_folder.setVisible(folder)
+        if folder: self.lbl_folder.setText(self.t('folder_starting'))
         sp_desc = self.t('sp_custom', len(cfg['sysprompt'])) if cfg['sysprompt'] else self.t('sp_default')
         self.lbl_use_prompt.setText(self.t('use_prompt', sp_desc))
         # reset UI trực quan
@@ -1336,9 +1502,16 @@ class MainWindow(QMainWindow):
         self.cb_lang.setEnabled(True)
 
     def _update_resume(self):
-        """Hiển thị mốc đã dịch đã lưu (resume) theo file hiện chọn."""
+        """Hiển thị mốc đã dịch đã lưu (resume) theo file/thư mục hiện chọn."""
         src = self.ed_src.text().strip(); out = self.ed_out.text().strip()
-        if not os.path.exists(src):
+        if self._folder_mode():           # chế độ thư mục: đếm nhanh số file khớp (KHÔNG đọc nội dung)
+            if not os.path.isdir(src):
+                self.lbl_resume.setText(''); return
+            ov = E.folder_overview(src, out, self.ed_ext.text().strip())
+            self.lbl_resume.setText(self.t('folder_none') if ov['files'] == 0
+                                    else self.t('folder_overview', ov['files'], ov['have_out']))
+            return
+        if not os.path.isfile(src):       # isfile (không phải exists): path thư mục -> không gọi resume
             self.lbl_resume.setText(''); return
         st = E.resume_status(src, out)
         if st['total'] == 0:
@@ -1369,6 +1542,8 @@ class MainWindow(QMainWindow):
         self.bridge.sig_log.connect(self._append_log)
         self.bridge.sig_stats.connect(self._on_stats)
         self.bridge.sig_finished.connect(self._on_finished)
+        self.bridge.sig_folder_init.connect(self._on_folder_init)
+        self.bridge.sig_folder_file.connect(self._on_folder_file)
 
     def _on_progress(self, e):
         self.pbar.setValue(e.get('pct', 0))
@@ -1400,9 +1575,20 @@ class MainWindow(QMainWindow):
     def _on_stats(self, e):
         self.card_err.set('%d' % e.get('err', 0), self.t('sub_retry', e.get('retries', 0)))
 
+    def _on_folder_init(self, e):
+        exts = e.get('exts') or []
+        txt = self.t('folder_init', e.get('n_files', 0), ' '.join(exts) if exts else self.t('ext_all'))
+        self.lbl_folder.setVisible(True); self.lbl_folder.setText(txt)
+
+    def _on_folder_file(self, e):
+        if e.get('state') == 'start':     # bắt đầu file mới -> cập nhật dòng tiến độ thư mục
+            self.lbl_folder.setText(self.t('folder_progress', e.get('index', 0) + 1,
+                                           e.get('total', 0), e.get('name', '')))
+
     def _on_finished(self, e):
         status = e.get('status'); msg = e.get('msg', '')
         self._append_log('=== %s ===' % msg)
+        if self._folder_mode(): self.lbl_folder.setText(msg)
         self._load_preview()          # cập nhật bảng XEM TRƯỚC theo kết quả mới nhất
         self._update_resume()         # cập nhật mốc đã dịch
         if status == 'ok':

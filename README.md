@@ -31,6 +31,7 @@ Tác giả: **PS5VietHoa** — *Phước Lê & Mèo Mặt Căng*.
 - **Resume** — ghi nhớ mốc đã dịch; tắt giữa chừng mở lại vẫn dịch tiếp phần còn lại, không làm lại từ đầu.
 - **2 chuẩn API**: OpenAI-compatible (`/v1/chat/completions`) và Anthropic (`/v1/messages`).
 - **Đa định dạng input** — tự nhận diện `KEY=VALUE` hoặc format **Resident** (FF7 Rebirth). Xem mục dưới.
+- **Dịch cả thư mục** — chọn 1 thư mục + (tùy chọn) **đuôi file** (`.txt .json`…; để trống = mọi file); tool dịch mọi file khớp (đệ quy cả thư mục con) sang thư mục song song `<tên>_vi`, **giữ nguyên cấu trúc cây** và resume từng file.
 
 ---
 
@@ -124,7 +125,7 @@ Trên macOS có thể double-click **`run_tool.command`**.
 |---|---|
 | **API** | Nhập `base_url`, API key, chọn model; **Kiểm tra kết nối** và **Lưu cấu hình**. |
 | **System Prompt** | Nhập tên game/tone/ghi chú và **Tự sinh** prompt từ mẫu text, hoặc tự viết/chỉnh tay. |
-| **Dịch** | Chọn file nguồn + file đích, bấm **Bắt đầu**; xem tiến độ realtime (lưới lô, worker, log). |
+| **Dịch** | Chế độ **File đơn** hoặc **Cả thư mục** (chọn đuôi file). Chọn nguồn + đích, bấm **Bắt đầu**; xem tiến độ realtime (lưới lô, worker, log). |
 | **Xem trước** | Bảng đối chiếu **Key / EN / VI** (ảo hóa, mượt cả file vài chục nghìn dòng); lọc/tìm nhanh. |
 | **Hướng dẫn** | Hướng dẫn trực quan ngay trong app (song ngữ). |
 
