@@ -15,9 +15,11 @@
 #  Giao tiếp với GUI qua MỘT callback emit(evt: dict). Không import PyQt -> test headless được.
 #  Lớp GUI (app.py) bọc emit bằng pyqtSignal.
 # ============================================================================
-import os, json, time, re, threading
+import os, sys, json, time, re, threading
 from concurrent.futures import ThreadPoolExecutor
 import httpx
+
+DEBUG_MAX = 4000   # số ký tự tối đa của response in ra console khi debug (đủ rộng để soi lỗi API)
 
 # ============================== PROMPT MẶC ĐỊNH ==============================
 UNIVERSAL_RULES = (
@@ -226,6 +228,22 @@ def sample_for_prompt(pairs, max_lines=120, max_chars=6000):
         out.append(ln); ch += len(ln)
     return '\n'.join(out)
 
+def estimate_tokens(text):
+    """Ước lượng số token (≈ ký tự/4, tối thiểu = số từ) — KHÔNG cần tokenizer ngoài.
+    Chỉ để HIỂN THỊ/cảnh báo; con số API tính thật có thể lệch."""
+    if not text: return 0
+    return max(len(text) // 4, len(text.split()))
+
+def sample_stats(text):
+    """Thống kê file mẫu cho tab System Prompt (hàm THUẦN -> chạy ở thread nền).
+    Trả {lines, chars, tokens, sample_tokens}: tokens = ước lượng CẢ file;
+    sample_tokens = ước lượng phần MẪU thực sự gửi cho AI khi sinh prompt (sample_for_prompt)."""
+    if not text: return {'lines': 0, 'chars': 0, 'tokens': 0, 'sample_tokens': 0}
+    pairs = parse_doc(text).pairs
+    translatable = sum(1 for k, v in pairs if v.strip() and v != k)
+    return {'lines': translatable, 'chars': len(text), 'tokens': estimate_tokens(text),
+            'sample_tokens': estimate_tokens(sample_for_prompt(pairs))}
+
 # ============================== PROVIDER (2 format API) ==============================
 class RateLimit(Exception): pass
 class DeadKey(Exception): pass
@@ -257,17 +275,37 @@ def _join_v1(base, suffix):
 class Provider:
     """Base: giữ httpx client (pooling) + retry/map-lỗi CHUNG. Subclass override 4 hàm THUẦN."""
     name = 'base'
-    def __init__(self, base_url, max_tokens=8192, temperature=0.3, timeout=180, max_conns=32):
+    def __init__(self, base_url, max_tokens=8192, temperature=0.3, timeout=180, max_conns=32, debug=False):
         self.base_url = _norm_base(base_url)
         self.max_tokens = max_tokens; self.temperature = temperature; self.timeout = timeout
+        self.debug = debug                      # True -> in chi tiết lỗi API ra console (stderr)
+        self.last_truncated = False             # phản hồi gần nhất có bị CẮT do chạm trần output?
         self._limits = httpx.Limits(max_connections=max_conns, max_keepalive_connections=max_conns)
         self._client = None; self._client_lock = threading.Lock()
+
+    def _rtext(self, r):
+        try: return (r.text or '')[:DEBUG_MAX]
+        except Exception: return ''
+
+    def _debug_dump(self, url, body, detail):
+        """In chi tiết lỗi API ra stderr (console). KHÔNG BAO GIỜ in header/API key (chỉ in
+        URL, model trong body, và nội dung API TRẢ VỀ). Chỉ chạy khi self.debug=True."""
+        if not self.debug: return
+        try:
+            model = body.get('model') if isinstance(body, dict) else ''
+            sys.stderr.write('\n[API-DEBUG %s] %s%s\n  %s\n'
+                             % (time.strftime('%H:%M:%S'), url,
+                                (' [model=%s]' % model) if model else '', detail))
+            sys.stderr.flush()
+        except Exception:
+            pass
 
     # --- subclass override (PURE) ---
     def endpoint(self): raise NotImplementedError
     def headers(self, key): raise NotImplementedError
     def build_body(self, model, system, user): raise NotImplementedError
     def parse_content(self, j): raise NotImplementedError
+    def is_truncated(self, j): return False    # phản hồi có bị cắt do chạm trần output không?
     def list_models_endpoint(self): return None
     def parse_models(self, j): return []
 
@@ -311,14 +349,31 @@ class Provider:
             r = self.client.post(url, headers={**headers, 'Content-Type': 'application/json'},
                                  json=body, timeout=timeout or self.timeout)
         except httpx.HTTPError as e:
+            self._debug_dump(url, body, 'NETWORK ERROR: %s' % str(e)[:DEBUG_MAX])
             raise Transient(str(e)[:120])
+        if r.status_code >= 400:
+            self._debug_dump(url, body, 'HTTP %d | response: %s' % (r.status_code, self._rtext(r)))
         self._raise_for_status(r)
-        try: return r.json()
-        except Exception: raise Transient('no_json: ' + (r.text[:120] if hasattr(r, 'text') else ''))
+        try:
+            return r.json()
+        except Exception:
+            self._debug_dump(url, body, 'HTTP %d no_json | response: %s' % (r.status_code, self._rtext(r)))
+            raise Transient('no_json: ' + (self._rtext(r)[:120]))
 
     def call(self, model, key, system, user):
-        j = self._post(self.endpoint(), self.headers(key), self.build_body(model, system, user))
-        return self.parse_content(j)
+        url = self.endpoint(); body = self.build_body(model, system, user)
+        j = self._post(url, self.headers(key), body)
+        try:
+            content = self.parse_content(j)
+        except Exception as e:      # 200 + JSON nhưng thiếu content / sai cấu trúc -> in cả JSON
+            self._debug_dump(url, body, 'parse lỗi: %s | json: %s'
+                             % (str(e)[:200], json.dumps(j, ensure_ascii=False)[:DEBUG_MAX]))
+            raise
+        self.last_truncated = self.is_truncated(j)   # bị cắt do chạm trần output?
+        if self.last_truncated:
+            self._debug_dump(url, body, 'CẢNH BÁO: phản hồi bị CẮT do chạm trần output (max_tokens=%s). '
+                             'Tăng max_tokens nếu cần nội dung dài hơn.' % self.max_tokens)
+        return content
 
     def list_models(self, key):
         url = self.list_models_endpoint()
@@ -346,6 +401,9 @@ class OpenAIProvider(Provider):
     def parse_content(self, j):
         try: return j['choices'][0]['message']['content']
         except Exception: raise Transient('no_content: ' + json.dumps(j)[:150])
+    def is_truncated(self, j):
+        try: return j['choices'][0].get('finish_reason') == 'length'
+        except Exception: return False
     def list_models_endpoint(self): return _join_v1(self.base_url, '/models')
     def parse_models(self, j):
         return sorted(m['id'] for m in j.get('data', []) if m.get('id'))
@@ -368,6 +426,8 @@ class AnthropicProvider(Provider):
             return txt or blocks[0]['text']
         except Exception:
             raise Transient('no_content: ' + json.dumps(j)[:150])
+    def is_truncated(self, j):
+        return j.get('stop_reason') == 'max_tokens'
     def list_models_endpoint(self): return None
 
 def make_provider(cfg):
@@ -376,13 +436,20 @@ def make_provider(cfg):
     # send_temperature=False -> KHÔNG gửi 'temperature' (model gpt-5/codex/o-series từ chối tham số này)
     temp = cfg.get('temperature', 0.3) if cfg.get('send_temperature', True) else None
     return cls(cfg.get('base_url', ''), cfg.get('max_tokens', 8192),
-               temp, cfg.get('timeout', 180), max_conns)
+               temp, cfg.get('timeout', 180), max_conns, cfg.get('debug', False))
 
 # ============================== TIỆN ÍCH CẤP CAO ==============================
 # (provider tạm dùng 1 lần -> đóng client httpx sau khi xong)
 def list_models(provider, key):
     try: return provider.list_models(key)
     finally: provider.close()
+
+_TOKEN_LIMIT_RE = re.compile(
+    r'context[_ ]length|maximum context|context window|too many tokens'
+    r'|tokens? (?:limit|exceed)|max_tokens|reduce the length|string too long', re.I)
+def is_token_limit_error(msg):
+    """Nhận diện lỗi GIỚI HẠN TOKEN/độ dài (vd max_tokens quá lớn, vượt context length)."""
+    return bool(_TOKEN_LIMIT_RE.search(msg or ''))
 
 def test_connection(provider, key, model):
     """Gửi 1 request nhỏ. Trả (ok: bool, msg: str)."""
@@ -397,15 +464,26 @@ def test_connection(provider, key, model):
         s = str(e)
         if 'temperature' in s.lower() and ('support' in s.lower() or 'unsupported' in s.lower()):
             return False, "Model KHÔNG nhận tham số 'temperature'. Hãy BỎ TÍCH ô 'temperature' ở tab API rồi thử lại."
+        if is_token_limit_error(s):
+            return False, "Vượt GIỚI HẠN TOKEN (vd max_tokens quá lớn / vượt context). Hãy GIẢM 'max_tokens' ở tab API rồi thử lại."
         return False, 'Lỗi tạm thời (sẽ retry khi dịch): %s' % s[:100]
     except Exception as e:
         return False, str(e)[:120]
     finally:
         provider.close()
 
-def gen_system_prompt(provider, key, model, sample_text, game_name='', tone='', note='', timeout=180):
-    """TỰ SINH system prompt dịch từ tên game + mẫu text game EN."""
+def gen_system_prompt(provider, key, model, sample_text, game_name='', tone='', note='', timeout=180, gen_max_tokens=16384):
+    """TỰ SINH system prompt dịch từ tên game + mẫu text game EN.
+    Trần output = gen_max_tokens (16384): ĐỦ RỘNG cho prompt giàu (glossary game lớn, vd FF7
+    Rebirth ~6k token) để KHÔNG bị cắt ngang, nhưng vẫn chặn trường hợp người dùng đặt max_tokens
+    rất cao để DỊCH (tới 1.000.000) khiến API từ chối 'max_tokens quá lớn'. 16384 = trần output
+    của GPT-4o và an toàn với Claude (tới 64k). Chỉ HẠ xuống khi max_tokens hiện tại lớn hơn;
+    nếu người dùng đã đặt nhỏ hơn (model output bé) thì giữ nguyên. Khôi phục max_tokens cũ sau khi xong.
+    Sau khi gọi, provider.last_truncated cho biết prompt có bị cắt (chạm trần) hay không."""
     provider.timeout = timeout
+    prev_mt = provider.max_tokens
+    if not prev_mt or prev_mt > gen_max_tokens:
+        provider.max_tokens = gen_max_tokens
     try:
         user = GEN_META_USER
         if game_name: user += '\nTÊN GAME: %s\n' % game_name
@@ -414,6 +492,7 @@ def gen_system_prompt(provider, key, model, sample_text, game_name='', tone='', 
         user += '\n===== MẪU TEXT GAME (EN) =====\n' + sample_text
         return provider.call(model, key, GEN_META_SYS, user).strip()
     finally:
+        provider.max_tokens = prev_mt
         provider.close()
 
 def build_system_prompt(cfg):

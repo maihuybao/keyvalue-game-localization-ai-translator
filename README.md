@@ -100,7 +100,8 @@ Rồi mở `config.json` và điền key của bạn vào mảng `keys`. Các tr
 | `provider` | `openai` (OpenAI-compatible) hoặc `anthropic` |
 | `base_url` | Domain API (vd `https://chat.trollllm.xyz`) — chỉ cần domain, tool tự thêm `/v1/...` |
 | `keys` | Danh sách API key (xoay vòng khi nhiều key) |
-| `model` / `models` | Model dùng để dịch / danh sách model dự phòng |
+| `model` / `models` | **Model mặc định** (tab API) / danh sách model dự phòng |
+| `model_prompt` / `model_translate` | Model riêng cho tab **System Prompt** / tab **Dịch** (để trống = dùng model mặc định) |
 | `auto_switch` | `true` để tự đổi model khi gặp rate-limit/lỗi |
 | `workers` | Số luồng dịch song song |
 | `maxlines` / `maxchars` | Giới hạn mỗi lô (số dòng / số ký tự) |
@@ -123,9 +124,9 @@ Trên macOS có thể double-click **`run_tool.command`**.
 
 | Tab | Chức năng |
 |---|---|
-| **API** | Nhập `base_url`, API key, chọn model; **Kiểm tra kết nối** và **Lưu cấu hình**. |
-| **System Prompt** | Nhập tên game/tone/ghi chú và **Tự sinh** prompt từ mẫu text, hoặc tự viết/chỉnh tay. |
-| **Dịch** | Chế độ **File đơn** hoặc **Cả thư mục** (chọn đuôi file). Chọn nguồn + đích, bấm **Bắt đầu**; xem tiến độ realtime (lưới lô, worker, log). |
+| **API** | Nhập `base_url`, API key, chọn **model mặc định**; **Kiểm tra kết nối** và **Lưu cấu hình**. |
+| **System Prompt** | Nhập tên game/tone/ghi chú và **Tự sinh** prompt từ mẫu text, hoặc tự viết/chỉnh tay. Có thể chọn **model riêng** để sinh prompt (mặc định bám model tab API). |
+| **Dịch** | Chế độ **File đơn** hoặc **Cả thư mục** (chọn đuôi file). Chọn nguồn + đích, **model dịch** (mặc định bám model tab API), bấm **Bắt đầu**; xem tiến độ realtime (lưới lô, worker, log). |
 | **Xem trước** | Bảng đối chiếu **Key / EN / VI** (ảo hóa, mượt cả file vài chục nghìn dòng); lọc/tìm nhanh. |
 | **Hướng dẫn** | Hướng dẫn trực quan ngay trong app (song ngữ). |
 

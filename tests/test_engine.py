@@ -4,7 +4,7 @@
 #  test_engine.py — Test engine HEADLESS (không gọi mạng) bằng MockProvider.
 #  Chạy:  python3 tests/test_engine.py
 # ============================================================================
-import os, sys, json, threading, tempfile, shutil
+import os, sys, json, threading, tempfile, shutil, io, contextlib
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import engine as E
@@ -367,6 +367,92 @@ try:
     check('folder không file khớp -> error', finE and finE[-1]['status'] == 'error', str(finE[-1] if finE else None))
 finally:
     shutil.rmtree(workf, ignore_errors=True)
+
+# ---------------------------------------------------------------------------
+print('\n[9] Token: ước lượng + cap khi sinh prompt + nhận diện lỗi')
+check('estimate_tokens rỗng', E.estimate_tokens('') == 0)
+check('estimate_tokens ~ chars/4', E.estimate_tokens('a' * 400) == 100, str(E.estimate_tokens('a' * 400)))
+_txt = '\n'.join('K%d=Line number %d here now' % (i, i) for i in range(50)) + '\n'
+_st = E.sample_stats(_txt)
+check('sample_stats lines=50', _st['lines'] == 50, str(_st))
+check('sample_stats chars khớp', _st['chars'] == len(_txt))
+check('sample_stats tokens>0 & sample<=total', _st['tokens'] > 0 and 0 < _st['sample_tokens'] <= _st['tokens'], str(_st))
+check('sample_stats rỗng', E.sample_stats('') == {'lines': 0, 'chars': 0, 'tokens': 0, 'sample_tokens': 0})
+
+check('is_token_limit_error context length', E.is_token_limit_error("This model's maximum context length is 8192 tokens"))
+check('is_token_limit_error max_tokens', E.is_token_limit_error("max_tokens is too large: 1000000"))
+check('is_token_limit_error too many tokens', E.is_token_limit_error("Too many tokens in request"))
+check('is_token_limit_error âm tính', not E.is_token_limit_error("connection reset by peer"))
+
+# gen_system_prompt GIỚI HẠN output max_tokens rồi KHÔI PHỤC
+class _RecMaxTok(E.Provider):
+    name = 'recmt'
+    def __init__(self, **kw): super().__init__('http://mock', **kw); self.seen_mt = None
+    def call(self, model, key, system, user): self.seen_mt = self.max_tokens; return '  GEN PROMPT  '
+_p = _RecMaxTok(max_tokens=1000000)
+_out = E.gen_system_prompt(_p, 'k', 'm', 'A=hello\nB=world', gen_max_tokens=4096)
+check('gen_system_prompt cap output max_tokens', _p.seen_mt == 4096, str(_p.seen_mt))
+check('gen_system_prompt khôi phục max_tokens', _p.max_tokens == 1000000, str(_p.max_tokens))
+check('gen_system_prompt trả prompt (strip)', _out == 'GEN PROMPT', repr(_out))
+_p2 = _RecMaxTok(max_tokens=2048)   # max_tokens nhỏ hơn cap -> giữ nguyên
+E.gen_system_prompt(_p2, 'k', 'm', 'A=x', gen_max_tokens=4096)
+check('gen_system_prompt giữ max_tokens khi đã nhỏ', _p2.seen_mt == 2048, str(_p2.seen_mt))
+_p3 = _RecMaxTok(max_tokens=1000000)
+E.gen_system_prompt(_p3, 'k', 'm', 'A=x')   # trần MẶC ĐỊNH (đủ rộng cho prompt giàu -> không cắt)
+check('gen_system_prompt trần mặc định = 16384', _p3.seen_mt == 16384, str(_p3.seen_mt))
+
+# is_truncated: phát hiện phản hồi bị cắt do chạm trần output
+_op = E.OpenAIProvider('http://x')
+check('OpenAI is_truncated finish_reason=length',
+      _op.is_truncated({'choices': [{'finish_reason': 'length', 'message': {'content': 'x'}}]}))
+check('OpenAI not truncated finish_reason=stop',
+      not _op.is_truncated({'choices': [{'finish_reason': 'stop'}]}))
+_anp = E.AnthropicProvider('http://x')
+check('Anthropic is_truncated stop_reason=max_tokens', _anp.is_truncated({'stop_reason': 'max_tokens'}))
+check('Anthropic not truncated stop_reason=end_turn', not _anp.is_truncated({'stop_reason': 'end_turn'}))
+
+# ---------------------------------------------------------------------------
+print('\n[10] Debug: in API trả về ra console khi lỗi (KHÔNG lộ API key)')
+class _FakeResp:
+    def __init__(self, code, text, jsonobj=None, raise_json=False):
+        self.status_code = code; self.text = text; self._j = jsonobj; self._rj = raise_json
+    def json(self):
+        if self._rj: raise ValueError('not json')
+        return self._j
+class _FakeClient:
+    def __init__(self, resp): self._resp = resp
+    def post(self, url, headers=None, json=None, timeout=None): return self._resp
+    def get(self, *a, **k): return self._resp
+    def close(self): pass
+
+def _capture_call(provider, resp):
+    provider._client = _FakeClient(resp)   # tiêm client giả (bỏ qua property lazy)
+    buf = io.StringIO()
+    with contextlib.redirect_stderr(buf):
+        try: provider.call('m', 'SECRETKEY_DO_NOT_LEAK', 'sys', 'usr')
+        except Exception: pass
+    return buf.getvalue()
+
+# HTTP 400 -> in mã lỗi + nguyên văn body, KHÔNG lộ key
+s = _capture_call(E.OpenAIProvider('http://x', debug=True), _FakeResp(400, 'BODY_DETAIL_FROM_API'))
+check('debug in nội dung API trả về', 'BODY_DETAIL_FROM_API' in s, s[:160])
+check('debug in mã HTTP 400', 'HTTP 400' in s and 'API-DEBUG' in s)
+check('debug KHÔNG lộ API key', 'SECRETKEY_DO_NOT_LEAK' not in s)
+
+# debug TẮT -> không in gì
+s_off = _capture_call(E.OpenAIProvider('http://x', debug=False), _FakeResp(400, 'MUST_NOT_PRINT'))
+check('debug TẮT -> im lặng', s_off.strip() == '', repr(s_off[:80]))
+
+# 200 nhưng body không phải JSON (router trả SSE/HTML) -> in no_json + body
+s_nj = _capture_call(E.OpenAIProvider('http://x', debug=True), _FakeResp(200, 'NOT_JSON_SSE_DATA', raise_json=True))
+check('debug no_json in body', 'NOT_JSON_SSE_DATA' in s_nj and 'no_json' in s_nj)
+
+# 200 + JSON nhưng sai cấu trúc (thiếu choices) -> in parse lỗi + nguyên JSON
+s_nc = _capture_call(E.OpenAIProvider('http://x', debug=True), _FakeResp(200, '{}', jsonobj={'weird': 'SHAPE_ABC'}))
+check('debug no_content in JSON', 'SHAPE_ABC' in s_nc and 'parse' in s_nc.lower())
+
+check('make_provider debug=True', E.make_provider({'provider': 'openai', 'base_url': 'http://x', 'debug': True}).debug is True)
+check('make_provider debug mặc định False', E.make_provider({'provider': 'openai', 'base_url': 'http://x'}).debug is False)
 
 # ---------------------------------------------------------------------------
 print('\n%s  PASS=%d  FAIL=%d' % ('='*40, PASS, FAIL))

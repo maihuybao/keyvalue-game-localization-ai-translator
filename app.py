@@ -178,6 +178,11 @@ TR = {
     'lines_label': {'vi': 'Dòng/lô:', 'en': 'Lines/batch:'},
     'btn_test': {'vi': 'Kiểm tra kết nối', 'en': 'Test connection'},
     'btn_save_cfg': {'vi': 'Lưu cấu hình', 'en': 'Save config'},
+    'debug_console': {'vi': 'Debug: in lỗi API ra console', 'en': 'Debug: print API errors to console'},
+    'debug_tip': {'vi': 'Khi BẬT: mỗi lần gọi API lỗi (HTTP 4xx/5xx, JSON hỏng, sai cấu trúc...) sẽ in '
+                        'URL + mã lỗi + NỘI DUNG API trả về ra console (terminal chạy app). KHÔNG in API key.',
+                  'en': 'When ON: each failed API call (HTTP 4xx/5xx, broken JSON, bad shape...) prints the '
+                        'URL + status + the API RESPONSE body to the console (the terminal running the app). API key is never printed.'},
     'st_saved_cfg': {'vi': 'Đã lưu config.json', 'en': 'Saved config.json'},
     'st_fetching_models': {'vi': 'Đang lấy model...', 'en': 'Fetching models...'},
     'st_models_fail': {'vi': 'Không lấy được danh sách model (Anthropic không hỗ trợ /models).',
@@ -215,6 +220,16 @@ TR = {
     'game_unnamed': {'vi': '(chưa đặt tên)', 'en': '(unnamed)'},
     'dlg_gen_fail_t': {'vi': 'Lỗi tạo prompt', 'en': 'Prompt generation error'},
     'log_gen_fail': {'vi': 'Tạo prompt thất bại: %s', 'en': 'Prompt generation failed: %s'},
+    'gen_too_many_tokens': {'vi': 'Vượt giới hạn token khi tạo prompt. Tool chỉ gửi một MẪU nhỏ của file, '
+                                  'nên thường do "max_tokens" ở tab API đặt quá lớn — hãy GIẢM max_tokens (vd 8192) rồi thử lại.',
+                            'en': 'Token limit exceeded while generating the prompt. The tool only sends a small SAMPLE of the file, '
+                                  'so this is usually because "max_tokens" in the API tab is too large — LOWER it (e.g. 8192) and retry.'},
+    'sample_tok_info': {'vi': 'File mẫu: ≈ %s token  •  %s dòng cần dịch  •  %s ký tự   —   khi Tạo prompt chỉ gửi mẫu ≈ %s token',
+                        'en': 'Sample file: ≈ %s tokens  •  %s translatable lines  •  %s chars   —   generating sends only a ≈ %s-token sample'},
+    'gen_truncated_warn': {'vi': 'CẢNH BÁO: system prompt vừa tạo có thể bị CẮT NGANG do chạm trần output. '
+                                 'Hãy TĂNG "max_tokens" ở tab API rồi bấm Tạo lại để có prompt đầy đủ.',
+                           'en': 'WARNING: the generated system prompt may be CUT OFF (hit the output limit). '
+                                 'Increase "max_tokens" in the API tab and Generate again for the full prompt.'},
     'log_gen_ok': {'vi': 'Đã tạo system prompt. Xem/sửa rồi bấm Lưu prompt.',
                    'en': 'System prompt generated. Review/edit then Save prompt.'},
     'dlg_saved_t': {'vi': 'Đã lưu', 'en': 'Saved'},
@@ -336,6 +351,7 @@ def _guide_data(lang):
             ]),
             ('Generate System Prompt  —  SYSTEM PROMPT tab', [
                 "Enter the <b>Game name</b> and pick an <b>English text file</b> as a sample.",
+                "The tool shows the file's <b>estimated tokens</b> below; only a small <b>sample</b> is sent, so a big file won't blow the token limit (if it still does, <b>lower max_tokens</b>).",
                 "Choose <b>genre / tone</b>, click <b>Generate system prompt</b> — the AI writes context, glossary, voice, rules.",
                 "Edit freely, then click <b>Save prompt</b>.",
                 "Leave it empty → the tool uses the <b>built-in default rules</b>.",
@@ -409,6 +425,7 @@ def _guide_data(lang):
             ]),
             ('Tạo System Prompt  —  tab PROMPT HỆ THỐNG', [
                 "Nhập <b>Tên game</b> và chọn <b>File text tiếng Anh</b> làm mẫu.",
+                "Tool hiện <b>ước lượng token</b> của file phía dưới; chỉ gửi một <b>mẫu nhỏ</b> nên file lớn không vượt giới hạn token (nếu vẫn lỗi, hãy <b>giảm max_tokens</b>).",
                 "Chọn <b>thể loại / tone</b>, bấm <b>Tạo system prompt</b> — AI tự viết bối cảnh, glossary, văn phong, quy tắc.",
                 "Sửa tay tùy ý rồi bấm <b>Lưu prompt</b>.",
                 "Để trống ô prompt → tool dùng <b>luật dịch mặc định</b> sẵn có.",
@@ -822,8 +839,10 @@ class MainWindow(QMainWindow):
         row = QHBoxLayout()
         self.btn_test = QPushButton(self.t('btn_test')); self.btn_test.clicked.connect(self._test_conn)
         self.btn_save = QPushButton(self.t('btn_save_cfg')); self.btn_save.clicked.connect(self._save_config_clicked)
+        self.cb_debug = QCheckBox(self.t('debug_console')); self.cb_debug.setChecked(True)
+        self.cb_debug.setToolTip(self.t('debug_tip'))
         self.lbl_api_status = QLabel(''); self.lbl_api_status.setObjectName('muted')
-        row.addWidget(self.btn_test); row.addWidget(self.btn_save)
+        row.addWidget(self.btn_test); row.addWidget(self.btn_save); row.addWidget(self.cb_debug)
         row.addWidget(self.lbl_api_status, 1); lay.addLayout(row)
         lay.addStretch(1)
         return w
@@ -885,15 +904,18 @@ class MainWindow(QMainWindow):
         g.addWidget(QLabel(self.t('eng_file')), 1, 0)
         self.ed_sample = QLineEdit(); g.addWidget(self.ed_sample, 1, 1, 1, 2)
         b = QPushButton(self.t('btn_browse')); b.clicked.connect(lambda: self._pick_into(self.ed_sample)); g.addWidget(b, 1, 3)
-        g.addWidget(QLabel(self.t('genre_tone')), 2, 0)
-        self.cb_tone = QComboBox(); self.cb_tone.addItems(list(E.TONES.keys())); g.addWidget(self.cb_tone, 2, 1, 1, 2)
-        g.addWidget(QLabel(self.t('extra_note')), 3, 0)
+        self.lbl_sample = QLabel(''); self.lbl_sample.setObjectName('muted'); self.lbl_sample.setWordWrap(True)
+        g.addWidget(self.lbl_sample, 2, 1, 1, 3)
+        g.addWidget(QLabel(self.t('genre_tone')), 3, 0)
+        self.cb_tone = QComboBox(); self.cb_tone.addItems(list(E.TONES.keys())); g.addWidget(self.cb_tone, 3, 1, 1, 2)
+        g.addWidget(QLabel(self.t('extra_note')), 4, 0)
         self.ed_note = QLineEdit(); self.ed_note.setPlaceholderText(self.t('note_ph'))
-        g.addWidget(self.ed_note, 3, 1, 1, 3)
-        g.addWidget(QLabel(self.t('model_prompt_label')), 4, 0)
+        g.addWidget(self.ed_note, 4, 1, 1, 3)
+        g.addWidget(QLabel(self.t('model_prompt_label')), 5, 0)
         self.cb_model_prompt = self._make_model_combo()
-        g.addWidget(self.cb_model_prompt, 4, 1, 1, 3)
+        g.addWidget(self.cb_model_prompt, 5, 1, 1, 3)
         lay.addWidget(top)
+        self.ed_sample.textChanged.connect(self._update_sample_tokens)   # đổi file mẫu -> đếm token (nền)
 
         row = QHBoxLayout()
         self.btn_gen = QPushButton(self.t('btn_gen')); self.btn_gen.setObjectName('primary'); self.btn_gen.clicked.connect(self._gen_prompt)
@@ -1225,7 +1247,7 @@ class MainWindow(QMainWindow):
         except Exception:
             return {'provider': 'openai', 'base_url': 'https://chat.trollllm.xyz/v1', 'keys': [],
                     'model': 'claude-sonnet-4-6', 'models': [], 'model_prompt': '', 'model_translate': '',
-                    'max_tokens': 8192, 'temperature': 0.3,
+                    'max_tokens': 8192, 'temperature': 0.3, 'debug': True,
                     'timeout': 180, 'workers': 8, 'maxlines': 50, 'maxchars': 8000, 'retries': 5,
                     'rounds': 6, 'mode': 'file', 'exts': '', 'sysprompt_path': 'system_prompt.txt', 'lang': 'vi'}
 
@@ -1250,6 +1272,7 @@ class MainWindow(QMainWindow):
         self._set_model_combo(self.cb_model_tr, c.get('model_translate', ''))
         self.sp_maxtok.setValue(int(c['max_tokens'])); self.sp_temp.setValue(float(c['temperature']))
         self.cb_send_temp.setChecked(bool(c.get('send_temperature', True))); self.sp_temp.setEnabled(self.cb_send_temp.isChecked())
+        self.cb_debug.setChecked(bool(c.get('debug', True)))
         self.sp_timeout.setValue(int(c['timeout'])); self.sp_workers.setValue(int(c['workers']))
         self.sp_maxlines.setValue(int(c['maxlines'])); self.cb_auto_switch.setChecked(bool(c['auto_switch']))
         self.ed_src.setText(c['src']); self.ed_out.setText(c['out'])
@@ -1285,6 +1308,7 @@ class MainWindow(QMainWindow):
         self.sp_maxtok.setValue(int(c.get('max_tokens', 8192)))
         self.sp_temp.setValue(float(c.get('temperature', 0.3)))
         self.cb_send_temp.setChecked(bool(c.get('send_temperature', True))); self.sp_temp.setEnabled(self.cb_send_temp.isChecked())
+        self.cb_debug.setChecked(bool(c.get('debug', True)))
         self.sp_timeout.setValue(int(c.get('timeout', 180)))
         self.sp_workers.setValue(int(c.get('workers', 8)))
         self.sp_maxlines.setValue(int(c.get('maxlines', 50)))
@@ -1317,6 +1341,7 @@ class MainWindow(QMainWindow):
             'auto_switch': self.cb_auto_switch.isChecked(),
             'max_tokens': self.sp_maxtok.value(), 'temperature': self.sp_temp.value(),
             'send_temperature': self.cb_send_temp.isChecked(),
+            'debug': self.cb_debug.isChecked() if hasattr(self, 'cb_debug') else True,
             'timeout': self.sp_timeout.value(), 'workers': self.sp_workers.value(),
             'maxlines': self.sp_maxlines.value(), 'maxchars': int(self.cfg.get('maxchars', 8000)),
             'retries': int(self.cfg.get('retries', 5)), 'rounds': int(self.cfg.get('rounds', 6)),
@@ -1395,16 +1420,22 @@ class MainWindow(QMainWindow):
         game = self.ed_game.text().strip(); tone = E.TONES.get(self.cb_tone.currentText(), ''); note = self.ed_note.text().strip()
         self.btn_gen.setEnabled(False); self.btn_gen.setText(self.t('btn_gen_running'))
         self._append_log(self.t('log_gen_prompt', model, game or self.t('game_unnamed')))
+        self._gen_prov = prov            # giữ tham chiếu để đọc last_truncated (prompt có bị cắt?) sau khi xong
         t = FnThread(lambda: E.gen_system_prompt(prov, key, model, sample, game, tone, note))
         t.done.connect(lambda r: self._on_gen(r)); self._threads.append(t); t.start()
 
     def _on_gen(self, r):
         self.btn_gen.setEnabled(True); self.btn_gen.setText(self.t('btn_gen'))
         if isinstance(r, Exception):
-            QMessageBox.critical(self, self.t('dlg_gen_fail_t'), str(r)[:300])
-            self._append_log(self.t('log_gen_fail', str(r)[:150])); return
+            msg = self.t('gen_too_many_tokens') if E.is_token_limit_error(str(r)) else str(r)[:300]
+            QMessageBox.critical(self, self.t('dlg_gen_fail_t'), msg)
+            self._append_log(self.t('log_gen_fail', msg[:150])); return
         self.ed_prompt.setPlainText(r)
-        self._append_log(self.t('log_gen_ok'))
+        if getattr(getattr(self, '_gen_prov', None), 'last_truncated', False):   # prompt bị cắt do chạm trần output
+            self._append_log(self.t('gen_truncated_warn'))
+            QMessageBox.warning(self, self.t('dlg_gen_fail_t'), self.t('gen_truncated_warn'))
+        else:
+            self._append_log(self.t('log_gen_ok'))
 
     def _save_prompt(self):
         sp = os.path.join(BASE, self.cfg.get('sysprompt_path', 'system_prompt.txt'))
@@ -1418,6 +1449,28 @@ class MainWindow(QMainWindow):
     def _load_prompt(self):
         p, _ = QFileDialog.getOpenFileName(self, self.t('fd_load_prompt'), BASE)
         if p: self.ed_prompt.setPlainText(E.read_text(p))
+
+    def _fmt_int(self, n):
+        """Số nguyên có dấu phân nhóm nghìn (vi: '.', en: ',')."""
+        s = '{:,}'.format(int(n))
+        return s.replace(',', '.') if self.lang == 'vi' else s
+
+    def _update_sample_tokens(self):
+        """Hiện tổng token (ước lượng) của file text tiếng Anh đã chọn — ĐỌC Ở THREAD NỀN."""
+        p = self.ed_sample.text().strip()
+        if not os.path.isfile(p):
+            self.lbl_sample.setText(''); return
+        self._sample_path = p
+        t = FnThread(lambda: (p, E.sample_stats(E.read_text(p))))
+        t.done.connect(self._on_sample_tokens); self._threads.append(t); t.start()
+
+    def _on_sample_tokens(self, res):
+        if isinstance(res, Exception): return
+        p, st = res
+        if p != getattr(self, '_sample_path', None): return   # kết quả của file cũ (đã đổi) -> bỏ
+        self.lbl_sample.setText(self.t('sample_tok_info', self._fmt_int(st['tokens']),
+                                       self._fmt_int(st['lines']), self._fmt_int(st['chars']),
+                                       self._fmt_int(st['sample_tokens'])))
 
     # ============================== FILE PICKERS ==============================
     def _pick_into(self, edit, save=False):
