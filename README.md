@@ -32,6 +32,7 @@ Tác giả: **PS5VietHoa** — *Phước Lê & Mèo Mặt Căng*.
 - **2 chuẩn API**: OpenAI-compatible (`/v1/chat/completions`) và Anthropic (`/v1/messages`).
 - **Đa định dạng input** — tự nhận diện `KEY=VALUE` hoặc format **Resident** (FF7 Rebirth). Xem mục dưới.
 - **Dịch cả thư mục** — chọn 1 thư mục + (tùy chọn) **đuôi file** (`.txt .json`…; để trống = mọi file); tool dịch mọi file khớp (đệ quy cả thư mục con) sang thư mục song song `<tên>_vi`, **giữ nguyên cấu trúc cây** và resume từng file.
+- **So sánh byte & giới hạn byte** — tab **Xem trước** hiện thêm 2 cột **Byte EN / Byte VI** (đối chiếu byte UTF-8 gốc ↔ dịch, tô đỏ dòng vượt). Tickbox **"Giới hạn byte ≤ bản gốc"** (tab Dịch): khi bật, ép số byte bản dịch không vượt câu gốc EN (hợp buffer game) — gửi ngân sách cho AI và **dịch lại** dòng còn vượt qua các vòng tự-sửa; khi tắt thì chỉ xem đối chiếu + cảnh báo.
 
 ---
 
@@ -103,8 +104,10 @@ Rồi mở `config.json` và điền key của bạn vào mảng `keys`. Các tr
 | `model` / `models` | **Model mặc định** (tab API) / danh sách model dự phòng |
 | `model_prompt` / `model_translate` | Model riêng cho tab **System Prompt** / tab **Dịch** (để trống = dùng model mặc định) |
 | `auto_switch` | `true` để tự đổi model khi gặp rate-limit/lỗi |
+| `byte_limit` | `true` để ép số byte UTF-8 bản dịch ≤ câu gốc EN (buffer game); `false` = chỉ xem đối chiếu byte |
+| `context_1m` | `true` để gửi header beta `context-1m-2025-08-07` (context window 1M). Chỉ cần cho **Claude Sonnet 4 cũ**; model mới (Opus 4.6+/Sonnet 4.6/Fable 5) đã 1M sẵn |
 | `workers` | Số luồng dịch song song |
-| `maxlines` / `maxchars` | Giới hạn mỗi lô (số dòng / số ký tự) |
+| `maxlines` / `maxchars` | Giới hạn mỗi lô (số dòng / số ký tự) — tăng để tận dụng context window lớn |
 
 > Bạn cũng có thể nhập toàn bộ thông số này trực tiếp trong tab **API** của ứng dụng, không cần sửa tay file JSON.
 
@@ -126,8 +129,8 @@ Trên macOS có thể double-click **`run_tool.command`**.
 |---|---|
 | **API** | Nhập `base_url`, API key, chọn **model mặc định**; **Kiểm tra kết nối** và **Lưu cấu hình**. |
 | **System Prompt** | Nhập tên game/tone/ghi chú và **Tự sinh** prompt từ mẫu text, hoặc tự viết/chỉnh tay. Có thể chọn **model riêng** để sinh prompt (mặc định bám model tab API). |
-| **Dịch** | Chế độ **File đơn** hoặc **Cả thư mục** (chọn đuôi file). Chọn nguồn + đích, **model dịch** (mặc định bám model tab API), bấm **Bắt đầu**; xem tiến độ realtime (lưới lô, worker, log). |
-| **Xem trước** | Bảng đối chiếu **Key / EN / VI** (ảo hóa, mượt cả file vài chục nghìn dòng); lọc/tìm nhanh. |
+| **Dịch** | Chế độ **File đơn** hoặc **Cả thư mục** (chọn đuôi file). Chọn nguồn + đích, **model dịch** (mặc định bám model tab API), tùy chọn **Giới hạn byte ≤ bản gốc**, bấm **Bắt đầu**; xem tiến độ realtime (lưới lô, worker, log). |
+| **Xem trước** | Bảng đối chiếu **Key / EN / VI / Byte EN / Byte VI** (ảo hóa, mượt cả file vài chục nghìn dòng); tô đỏ dòng **vượt byte**; lọc/tìm nhanh, lọc **chỉ hiện vượt byte**. |
 | **Hướng dẫn** | Hướng dẫn trực quan ngay trong app (song ngữ). |
 
 > Bộ chuyển **ngôn ngữ Việt / English** nằm ở góc phải header, đổi tức thì toàn bộ giao diện.

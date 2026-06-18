@@ -1,1 +1,56 @@
+BỐI CẢNH GAME:
+Horizon Forbidden West — game hành động nhập vai (action-RPG) thế giới mở hậu tận thế. Bối cảnh tương lai xa, loài người thoái về xã hội bộ tộc sống giữa tàn tích văn minh cổ và những cỗ máy khổng lồ hình thú nguy hiểm. Tone: phiêu lưu sử thi, hoang dã, pha lẫn khoa học viễn tưởng. Nhân vật chính Aloy là thợ săn/người tìm kiếm chân tướng. Thoại đa dạng: tự nhiên đời thường, gan dạ, đôi khi mỉa mai; lore và mô tả mang sắc thái trang trọng, bí ẩn. Dịch phải truyền tải được không khí vừa nguyên thủy vừa công nghệ cao.
 
+GLOSSARY:
+
+GIỮ NGUYÊN (tên riêng/nhân vật/địa danh/phe phái/máy móc):
+- Tên người: Aloy, Walter, Daxx, Warend, Ikkotah
+- Phe/bộ tộc: Tenakth, Oseram, Utaru, Carja, Quen
+- Tên hệ thống AI: AETHER, POSEIDON, DEMETER, GAIA
+- Tên cỗ máy: Thunderjaw, Clawstrider, Acid Clawstrider, Scrapper, Lancehorn
+- Địa danh/DLC: Burning Shores, Valley of the Fallen, The Arena
+- Định danVng kỹ thuật/placeholder ID: DLC_SQ31_Prisoner2 (GIỮ NGUYÊN tuyệt đối, KHÔNG dịch)
+
+THUẬT NGỮ GAMEPLAY — DỊCH THỐNG NHẤT (EN → VI):
+- Machine → Cỗ máy
+- Outpost → Tiền đồn
+- Outpost Leader → Thủ lĩnh Tiền đồn
+- Outlander → Kẻ ngoại tộc
+- Spear → Giáo
+- Blastsling → Súng phóng nổ
+- Grapple / Grapple Strike → Móc kéo / Đòn Móc kéo
+- Resonator Blast → Đòn Cộng hưởng
+- Energy Surge → Xung Năng lượng
+- Energize → Tích năng lượng
+- Burning State (Fire) → Trạng thái Bốc cháy (Lửa)
+- Firegleam / Unstable Firegleam → Firegleam (giữ nguyên) / Firegleam Bất ổn
+- Override device → Thiết bị Khống chế
+- Machine Strike → Machine Strike (giữ nguyên — tên trò chơi nhỏ trong game)
+- Side Quest → Nhiệm vụ Phụ
+- Scrap / Scrap Pile → Phế liệu / Đống Phế liệu
+- Hunting Medal → Huy chương Săn bắn
+- Vessel → Khoang chứa (hoặc "Bình chứa" theo ngữ cảnh, giữ thống nhất)
+- Watchtower → Tháp canh
+- Vacuum Turbine → Tua-bin Chân không
+- Radar → Ra-đa
+- Capsule → Viên nang
+- Sludge → Bùn nhão
+- Hologram → Ảnh ba chiều
+- Health → Máu (UI)
+
+XƯNG HÔ & VĂN PHONG:
+- UI/nút bấm/tên vật phẩm/nhiệm vụ (ngắn): cô đọng, danh từ hoá, không thêm chủ ngữ. VD "Kill the Outpost Leader" → "Tiêu diệt Thủ lĩnh Tiền đồn".
+- Thoại nhân vật: tự nhiên, đời thường, giữ giọng điệu (mỉa mai, gan dạ, thân mật). Xưng hô linh hoạt theo quan hệ: đồng đội ngang hàng → "tôi/cậu" hoặc "ta/ngươi" với người ngoại tộc/đối địch; Aloy với người lớn tuổi → "tôi/bà/ông". Giữ giọng tự tin, cứng cỏi của Aloy.
+- Lore/mô tả vật phẩm/scan: trang trọng, súc tích, văn phong tư liệu khảo sát. VD scan máy móc dùng câu rút gọn kiểu báo cáo.
+- Câu cảm thán chiến đấu: ngắn, sống động, đúng nhịp ("There!" → "Kia kìa!", "Almost there!" → "Sắp tới rồi!").
+
+QUY TẮC KỸ THUẬT (BẮT BUỘC):
+- GIỮ NGUYÊN tuyệt đối mọi biến, thẻ, ký hiệu: {biến}, <thẻ>, <time0.23>, <time2.31>, <input-action-icon name=Grapple>, [BONUS_1], [REDACTED]. Không dịch, không đổi vị trí trừ khi ngữ pháp tiếng Việt bắt buộc; nếu phải di chuyển, giữ nguyên y hệt chuỗi bên trong.
+- GIỮ NGUYÊN \n và \r đúng vị trí. **DỊCH TOÀN BỘ nội dung, kể cả các dòng SAU \n.** Không được chỉ dịch dòng đầu rồi bỏ phần còn lại. Mỗi đoạn ngăn bởi \n đều phải có bản dịch tiếng Việt tương ứng.
+- Chuỗi UI viết HOA → giữ HOA (VD AETHER, POSEIDON, DEMETER giữ nguyên dạng).
+- Mục rỗng, chỉ có ký hiệu, hoặc ID dạng DLC_SQ31_Prisoner2 → GIỮ NGUYÊN, KHÔNG dịch.
+- Số liệu, đơn vị giữ nguyên định dạng: "1.6 Seconds" → "1,6 Giây" (chuyển dấu thập phân sang dấu phẩy theo chuẩn VN, giữ thống nhất); "30m" giữ nguyên; "98%" giữ nguyên.
+- Giữ nguyên định dạng ID=nội_dung: chỉ dịch phần sau dấu =, KHÔNG đụng vào ID phía trước.
+- Không thêm dấu câu, khoảng trắng thừa hay chú thích vào kết quả.
+
+Kiểm tra trước khi xuất: đếm số đoạn ngăn bởi \n trong bản gốc và bản dịch — phải KHỚP NHAU. Mọi <time...>, <tag>, {var} phải còn nguyên vẹn.

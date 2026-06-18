@@ -20,6 +20,7 @@ from concurrent.futures import ThreadPoolExecutor
 import httpx
 
 DEBUG_MAX = 4000   # số ký tự tối đa của response in ra console khi debug (đủ rộng để soi lỗi API)
+CONTEXT_1M_BETA = 'context-1m-2025-08-07'   # header beta mở context window 1M cho Claude (Sonnet 4 cũ; model mới đã 1M sẵn)
 
 # ============================== PROMPT MẶC ĐỊNH ==============================
 UNIVERSAL_RULES = (
@@ -30,6 +31,7 @@ UNIVERSAL_RULES = (
     "  Số lượng và vị trí placeholder trong bản dịch PHẢI khớp bản gốc.\n"
     "- Dịch tự nhiên, đúng nghĩa, hợp văn cảnh; KHÔNG dịch máy từng từ.\n"
     "- Mục \"en\" rỗng/chỉ ký hiệu/mã -> giữ NGUYÊN.\n"
+    "- Nếu `en` chứa ký tự xuống dòng thật (\\n), bản dịch `vi` PHẢI có ĐÚNG cùng số \\n ở cùng vị trí tương đối (xuống dòng tương ứng từng dòng trong game UI).\n"
     "- KHÔNG giải thích, KHÔNG chú thích."
 )
 OUTPUT_REMINDER = (
@@ -73,6 +75,11 @@ _PH_RE = re.compile(r'<[^>]*>|\{[^}]*\}|%[sdfSDF]|\\[nrt]')   # '<[^>]*>' bắt 
 def read_text(p):
     return open(p, encoding='utf-8-sig').read() if (p and os.path.isfile(p)) else ''   # isfile: path thư mục -> '' (không crash)
 
+def utf8_len(s):
+    """Số byte UTF-8 của chuỗi (buffer game đo bằng byte, không phải ký tự).
+    Ký tự tiếng Việt có dấu tốn 2-3 byte; ASCII chỉ 1 byte -> bản dịch VI thường DÀI byte hơn EN."""
+    return len((s or '').encode('utf-8'))
+
 def extract_placeholders(text):
     seen = []
     for m in _PH_RE.findall(text):
@@ -80,13 +87,33 @@ def extract_placeholders(text):
     return seen
 
 def parse_pairs_text(txt):
+    """Mỗi dòng KEY=VALUE. Value có thể trải NHIỀU DÒNG vật lý: dòng tiếp theo KHÔNG có '=' và
+    KHÔNG bắt đầu bằng '#' thì được nối vào value của KEY trước đó (cách nhau bằng '\n').
+    Dòng rỗng trong value được giữ (thêm '\n'). Comment phá vỡ continuation.
+    Ví dụ: 'K=A\\nB=C\\n  D' -> pairs=[('K','A\\n  D'), ('B','C')],  raw=[3 dòng]."""
     raw = txt.split('\n')
     if raw and raw[-1] == '': raw = raw[:-1]
     pairs = []
+    pending_key = None        # KEY đang chờ ghép dòng tiếp theo
+    pending_value = None
     for ln in raw:
-        if not ln or ln.lstrip().startswith('#'): continue
+        if not ln:
+            if pending_key is not None:
+                pending_value += '\n'                           # dòng rỗng trong value -> giữ \n
+                pairs[-1] = (pending_key, pending_value)        # cập nhật tuple (tuple là bất biến)
+            continue
+        if ln.lstrip().startswith('#'):
+            pending_key = None                                   # comment phá vỡ continuation
+            continue
         if '=' in ln:
-            k, v = ln.split('=', 1); pairs.append((k, v))
+            k, v = ln.split('=', 1)
+            pairs.append((k, v))
+            pending_key, pending_value = k, v
+            continue
+        if pending_key is not None:                              # dòng thừa -> nối vào value
+            pending_value += '\n' + ln
+            pairs[-1] = (pending_key, pending_value)
+        # else: dòng thừa không thuộc KEY nào (chưa từng có KEY) -> bỏ qua
     return raw, pairs
 
 # ===================== ĐA-FORMAT I/O (KEY=VALUE  &  Resident $KEY-block) =====================
@@ -127,7 +154,12 @@ class Doc:
         for ln in self.payload:
             if ln and not ln.lstrip().startswith('#') and '=' in ln:
                 k = ln.split('=', 1)[0]
-                if k in vals: out.append('%s=%s' % (k, vals[k])); continue
+                if k in vals:
+                    # vals[k] có thể chứa '\n' thật (value gốc nhiều dòng vật lý) ->
+                    # ghi ĐÚNG số dòng vật lý. An toàn \r (thay bằng space), strip \n thừa cuối.
+                    vi = vals[k].replace('\r', ' ').rstrip('\n')
+                    out.append('%s=%s' % (k, vi))
+                    continue
             out.append(ln)
         return '\n'.join(out) + '\n'
 
@@ -162,15 +194,20 @@ def write_doc(path, doc, vals):
         w.write(doc.serialize(vals))
     os.replace(tmp, path)
 
-def check_line(eng, vi):
-    """Trả về list lý do lỗi (rỗng nếu OK)."""
+def check_line(eng, vi, byte_limit=False):
+    """Trả về list lý do lỗi (rỗng nếu OK).
+    byte_limit=True -> thêm luật NGÂN SÁCH BYTE: bản dịch không được vượt số byte UTF-8 của dòng gốc EN
+    (buffer game đo bằng byte). Dòng vượt bị coi là 'nghi lỗi' -> dịch lại ở vòng tự-sửa."""
     if not vi.strip(): return ['rỗng']
     r = []
     if '```' in vi: r.append('có_```')
     for nm, pat in (('{biến}', RE_CURLY), ('thẻ', RE_TAG), ('[..]', RE_REDACT)):
         if sorted(pat.findall(eng)) != sorted(pat.findall(vi)): r.append('lệch_' + nm)
-    if eng.count('\\n') != vi.count('\\n'): r.append('lệch_\\n')
+    if eng.count('\n') != vi.count('\n'): r.append('lệch_\\n')   # đếm newline THẬT (1 ký tự)
     if vi.strip() == eng.strip() and len(eng) > 30 and ' ' in eng.strip(): r.append('chưa_dịch?')
+    if byte_limit:
+        over = utf8_len(vi) - utf8_len(eng)
+        if over > 0: r.append('vượt_byte(+%dB)' % over)
     return r
 
 def make_batches(items, maxlines, maxchars):
@@ -184,17 +221,22 @@ def make_batches(items, maxlines, maxchars):
 
 def build_user_prompt(items):
     payload = []
+    has_budget = False
     for it in items:
         obj = {'id': it['id'], 'en': it['en']}
         ph = it.get('placeholders')
         if ph: obj['placeholders'] = ph
+        mb = it.get('max_bytes')
+        if mb is not None:
+            obj['max_bytes'] = mb; has_budget = True
         payload.append(obj)
-    return (
-        "Dịch các mục sau sang tiếng Việt theo ĐÚNG quy tắc trong system prompt.\n"
-        "- `placeholders` (nếu có) = token BẮT BUỘC giữ NGUYÊN, đúng vị trí trong `vi`.\n\n"
-        + OUTPUT_REMINDER + "\n\n"
-        + json.dumps(payload, ensure_ascii=False)
-    )
+    rules = ("Dịch các mục sau sang tiếng Việt theo ĐÚNG quy tắc trong system prompt.\n"
+             "- `placeholders` (nếu có) = token BẮT BUỘC giữ NGUYÊN, đúng vị trí trong `vi`.\n")
+    if has_budget:
+        rules += ("- `max_bytes` (nếu có) = số byte UTF-8 TỐI ĐA cho bản dịch `vi` (giới hạn CỨNG, KHÔNG vượt). "
+                  "Ký tự tiếng Việt có dấu tốn 2-3 byte/ký tự, chữ ASCII chỉ 1 byte -> hãy dịch NGẮN GỌN, "
+                  "bỏ từ thừa, ưu tiên từ ít dấu để VỪA ngân sách mà vẫn đúng nghĩa.\n")
+    return rules + "\n" + OUTPUT_REMINDER + "\n\n" + json.dumps(payload, ensure_ascii=False)
 
 def parse_json_array(content):
     """Trích JSON array từ content model (bỏ ```json fences / text thừa)."""
@@ -275,17 +317,45 @@ def _join_v1(base, suffix):
 class Provider:
     """Base: giữ httpx client (pooling) + retry/map-lỗi CHUNG. Subclass override 4 hàm THUẦN."""
     name = 'base'
-    def __init__(self, base_url, max_tokens=8192, temperature=0.3, timeout=180, max_conns=32, debug=False):
+    def __init__(self, base_url, max_tokens=8192, temperature=0.3, timeout=180, max_conns=32, debug=False, anthropic_beta=''):
         self.base_url = _norm_base(base_url)
         self.max_tokens = max_tokens; self.temperature = temperature; self.timeout = timeout
         self.debug = debug                      # True -> in chi tiết lỗi API ra console (stderr)
+        self.anthropic_beta = (anthropic_beta or '').strip()   # chuỗi 'anthropic-beta' (vd context-1m-2025-08-07); rỗng = không gửi
         self.last_truncated = False             # phản hồi gần nhất có bị CẮT do chạm trần output?
         self._limits = httpx.Limits(max_connections=max_conns, max_keepalive_connections=max_conns)
         self._client = None; self._client_lock = threading.Lock()
 
+    def _with_beta(self, headers):
+        """Gắn header 'anthropic-beta' (vd context-1m-2025-08-07 để mở context 1M) nếu được bật.
+        Router OpenAI-compatible proxy Claude thường chuyển tiếp header này; model mới đã 1M sẵn nên vô hại."""
+        if self.anthropic_beta:
+            headers['anthropic-beta'] = self.anthropic_beta
+        return headers
+
     def _rtext(self, r):
         try: return (r.text or '')[:DEBUG_MAX]
         except Exception: return ''
+
+    def _max_tokens_cap_from_error(self, text):
+        """Nếu lỗi 400 là 'max_tokens vượt trần OUTPUT của model' (vd 'max_tokens: 1000000 > 128000,
+        which is the maximum allowed number of output tokens'), trả về TRẦN đó để tự giảm rồi thử lại.
+        CHỈ áp cho lỗi liên quan max_tokens/output token (KHÔNG đụng lỗi context-length đầu vào)."""
+        low = (text or '').lower()
+        if 'max_tokens' not in low and 'output token' not in low: return None
+        cap = parse_max_tokens_cap(text)
+        return cap if (cap and cap < self.max_tokens) else None
+
+    def _context_overflow_cap_from_error(self, text):
+        """Nếu lỗi 400 là 'VƯỢT CONTEXT WINDOW' (tổng input+output > cửa sổ ngữ cảnh model/router,
+        vd 9Router giới hạn 128000), trả max_tokens MỚI = nửa cửa sổ (chừa nửa kia cho input) hoặc None.
+        KHÁC lỗi 'max_tokens > trần OUTPUT': ở đây max_tokens đang chiếm gần hết cửa sổ -> giảm để có chỗ cho input.
+        CHỈ giảm khi giá trị mới NHỎ HƠN max_tokens hiện tại (max_tokens đã nhỏ mà vẫn vượt -> do INPUT quá to)."""
+        if not _CONTEXT_ERR_RE.search(text or ''): return None
+        limit = parse_max_tokens_cap(text)
+        if not limit: return None
+        new_max = max(1024, limit // 2)
+        return new_max if new_max < self.max_tokens else None
 
     def _debug_dump(self, url, body, detail):
         """In chi tiết lỗi API ra stderr (console). KHÔNG BAO GIỜ in header/API key (chỉ in
@@ -352,7 +422,19 @@ class Provider:
             self._debug_dump(url, body, 'NETWORK ERROR: %s' % str(e)[:DEBUG_MAX])
             raise Transient(str(e)[:120])
         if r.status_code >= 400:
-            self._debug_dump(url, body, 'HTTP %d | response: %s' % (r.status_code, self._rtext(r)))
+            detail = self._rtext(r)
+            self._debug_dump(url, body, 'HTTP %d | response: %s' % (r.status_code, detail))
+            if r.status_code == 400:
+                cap = self._max_tokens_cap_from_error(detail)
+                if cap:                       # max_tokens vượt trần OUTPUT của model -> tự GIẢM rồi báo retry
+                    old = self.max_tokens; self.max_tokens = cap
+                    raise Transient('max_tokens %d vượt trần model (%d) -> đã giảm còn %d rồi thử lại'
+                                    % (old, cap, cap))
+                cap2 = self._context_overflow_cap_from_error(detail)
+                if cap2:                      # input + max_tokens vượt CONTEXT WINDOW -> giảm max_tokens chừa chỗ cho input
+                    old = self.max_tokens; self.max_tokens = cap2
+                    raise Transient('Vượt context window (cửa sổ ngữ cảnh) -> đã giảm max_tokens %d xuống %d rồi thử lại'
+                                    % (old, cap2))
         self._raise_for_status(r)
         try:
             return r.json()
@@ -388,7 +470,7 @@ class Provider:
 class OpenAIProvider(Provider):
     name = 'openai'
     def endpoint(self): return _join_v1(self.base_url, '/chat/completions')
-    def headers(self, key): return {'Authorization': 'Bearer ' + key}
+    def headers(self, key): return self._with_beta({'Authorization': 'Bearer ' + key})
     def build_body(self, model, system, user):
         body = {'model': model,
                 'messages': [{'role': 'system', 'content': system},
@@ -412,7 +494,7 @@ class AnthropicProvider(Provider):
     name = 'anthropic'
     def endpoint(self): return _join_v1(self.base_url, '/messages')
     def headers(self, key):
-        return {'x-api-key': key, 'anthropic-version': '2023-06-01'}
+        return self._with_beta({'x-api-key': key, 'anthropic-version': '2023-06-01'})
     def build_body(self, model, system, user):
         body = {'model': model, 'max_tokens': self.max_tokens, 'system': system,
                 'messages': [{'role': 'user', 'content': user}]}
@@ -430,13 +512,25 @@ class AnthropicProvider(Provider):
         return j.get('stop_reason') == 'max_tokens'
     def list_models_endpoint(self): return None
 
+def build_anthropic_beta(cfg):
+    """Dựng chuỗi header 'anthropic-beta' (nối bằng ',') từ config. Hiện chỉ có cờ context_1m
+    (mở context window 1M cho Claude). Tách riêng để test + dễ thêm cờ beta khác sau này."""
+    betas = []
+    if cfg.get('context_1m'):
+        betas.append(CONTEXT_1M_BETA)
+    extra = (cfg.get('anthropic_beta') or '').strip()   # cho phép tự nhập thêm beta thô (tùy chọn)
+    if extra:
+        betas.extend(b.strip() for b in re.split(r'[,\s]+', extra) if b.strip())
+    return ','.join(dict.fromkeys(betas))               # bỏ trùng, giữ thứ tự
+
 def make_provider(cfg):
     cls = {'openai': OpenAIProvider, 'anthropic': AnthropicProvider}.get(cfg.get('provider', 'openai'), OpenAIProvider)
     max_conns = max(8, int(cfg.get('workers', 8)) + 4)   # pool đủ cho số luồng song song
     # send_temperature=False -> KHÔNG gửi 'temperature' (model gpt-5/codex/o-series từ chối tham số này)
     temp = cfg.get('temperature', 0.3) if cfg.get('send_temperature', True) else None
     return cls(cfg.get('base_url', ''), cfg.get('max_tokens', 8192),
-               temp, cfg.get('timeout', 180), max_conns, cfg.get('debug', False))
+               temp, cfg.get('timeout', 180), max_conns, cfg.get('debug', False),
+               build_anthropic_beta(cfg))
 
 # ============================== TIỆN ÍCH CẤP CAO ==============================
 # (provider tạm dùng 1 lần -> đóng client httpx sau khi xong)
@@ -451,11 +545,45 @@ def is_token_limit_error(msg):
     """Nhận diện lỗi GIỚI HẠN TOKEN/độ dài (vd max_tokens quá lớn, vượt context length)."""
     return bool(_TOKEN_LIMIT_RE.search(msg or ''))
 
+# Trích TRẦN max_tokens model cho phép từ thông báo lỗi 400 (nhiều dạng router/Anthropic/OpenAI):
+#   Anthropic: "max_tokens: 1000000 > 128000, which is the maximum allowed number of output tokens"
+#   OpenAI:    "max_tokens is too large: ... supports at most 16384 ..." / "maximum ... is 4096"
+_MAXTOK_CAP_RE = [
+    re.compile(r'>\s*(\d{3,})'),                                  # 'X > 128000' (Anthropic)
+    re.compile(r'at most\s+(\d{3,})', re.I),                      # 'supports at most 16384'
+    re.compile(r'(?:max(?:imum)?|context|window|limit)[^\d]{0,40}?(\d{3,})', re.I),  # 'maximum/context/window/limit ... 128000'
+]
+# Lỗi VƯỢT CONTEXT WINDOW (tổng input+output > cửa sổ ngữ cảnh, vd 9Router 128000) — KHÁC lỗi 'max_tokens > trần OUTPUT'
+_CONTEXT_ERR_RE = re.compile(
+    r'context[ _-]?(?:length|window|limit)|maximum context|context_length_exceeded'
+    r'|reduce the length of (?:the )?messages', re.I)
+def parse_max_tokens_cap(msg):
+    """Trả về số TRẦN max_tokens model cho phép (int) đọc được từ thông báo lỗi, hoặc None.
+    Dùng để TỰ GIẢM max_tokens khi người dùng đặt cao hơn trần output của model rồi thử lại."""
+    if not msg: return None
+    for rx in _MAXTOK_CAP_RE:
+        m = rx.search(msg)
+        if m:
+            try: return int(m.group(1))
+            except (ValueError, IndexError): pass
+    return None
+
 def test_connection(provider, key, model):
-    """Gửi 1 request nhỏ. Trả (ok: bool, msg: str)."""
+    """Gửi 1 request nhỏ. Trả (ok: bool, msg: str).
+    Nếu max_tokens vượt trần output của model -> provider TỰ GIẢM, hàm thử lại 1 lần rồi báo đã giảm."""
     try:
-        txt = provider.call(model, key, 'You are a test.', 'Reply with exactly: OK')
-        return True, (txt or '').strip()[:80] or 'OK'
+        before = provider.max_tokens
+        try:
+            txt = provider.call(model, key, 'You are a test.', 'Reply with exactly: OK')
+        except Transient as e:
+            if 'đã giảm' in str(e):     # provider vừa tự giảm max_tokens (vượt trần model) -> thử lại 1 lần
+                txt = provider.call(model, key, 'You are a test.', 'Reply with exactly: OK')
+            else:
+                raise
+        msg = (txt or '').strip()[:80] or 'OK'
+        if provider.max_tokens != before:
+            msg += '  (đã tự giảm max_tokens xuống %d cho model này)' % provider.max_tokens
+        return True, msg
     except RateLimit as e:
         return False, 'Hết quota / rate-limit: %s' % str(e)[:100]
     except DeadKey as e:
@@ -538,32 +666,36 @@ def resume_status(src, out):
     d = sum(1 for k in translatable if k in done)
     return {'total': len(translatable), 'done': d, 'todo': len(translatable) - d}
 
-# status: 0 = ok/không cần dịch, 1 = chưa dịch, 2 = nghi lỗi placeholder
-def build_preview_rows(src, out):
-    """Đối chiếu key/EN/VI cho tab XEM TRƯỚC (hàm THUẦN, chạy được ở thread nền).
-    Trả (rows, stats): rows = list (key, en, vi, status); stats theo dòng cần dịch."""
+# status: 0 = ok/không cần dịch, 1 = chưa dịch, 2 = nghi lỗi placeholder/vượt byte
+def build_preview_rows(src, out, byte_limit=False):
+    """Đối chiếu key/EN/VI + SO SÁNH BYTE cho tab XEM TRƯỚC (hàm THUẦN, chạy được ở thread nền).
+    Trả (rows, stats): rows = list (key, en, vi, status, en_bytes, vi_bytes); stats theo dòng cần dịch.
+    Cột byte LUÔN được tính (để xem đối chiếu). byte_limit=True -> dòng có vi_bytes > en_bytes bị xếp
+    'nghi lỗi' (status 2). 'over' = số dòng đã dịch mà bản dịch VƯỢT byte gốc (luôn đếm, để cảnh báo)."""
     txt = read_text(src)
     if not txt:
-        return [], {'total': 0, 'done': 0, 'pending': 0, 'bad': 0}
+        return [], {'total': 0, 'done': 0, 'pending': 0, 'bad': 0, 'over': 0}
     pairs = parse_doc(txt).pairs
     vmap = {}
     if out and os.path.exists(out):
         vmap = dict(parse_doc(read_text(out)).pairs)
-    rows = []; done = pending = bad = 0
+    rows = []; done = pending = bad = over = 0
     for k, en in pairs:
         vi = vmap.get(k, '')
+        en_b = utf8_len(en); vi_b = utf8_len(vi)
         if not en.strip() or en == k:
             status = 0
         elif not vi.strip() or vi == en:
             status = 1
-        elif check_line(en, vi):
+        elif check_line(en, vi, byte_limit):
             status = 2
         else:
             status = 0
-        rows.append((k, en, vi, status))
+        rows.append((k, en, vi, status, en_b, vi_b))
         if en.strip() and en != k:
             done += status == 0; pending += status == 1; bad += status == 2
-    return rows, {'total': done + pending + bad, 'done': done, 'pending': pending, 'bad': bad}
+            if vi.strip() and vi != en and vi_b > en_b: over += 1
+    return rows, {'total': done + pending + bad, 'done': done, 'pending': pending, 'bad': bad, 'over': over}
 
 # ============================== DỊCH CẢ THƯ MỤC (helper thuần) ==============================
 # Dịch mọi file khớp đuôi trong 1 thư mục -> thư mục song song '<tên>_vi' (giữ cây thư mục).
@@ -744,11 +876,15 @@ class TranslationRun:
                  % (self.total, len(done), len(todo), cfg.get('workers', 8), ', '.join(self.models)))
         donef = open(donef_path, 'a', encoding='utf-8')
 
+        byte_limit = cfg.get('byte_limit', False)   # ép byte bản dịch <= byte gốc EN (gửi max_bytes cho AI)
+
         def run_parallel(work_pairs, label):
             id_to_key = {}; items = []
             for i, (k, en) in enumerate(work_pairs):
                 id_to_key[i] = k
-                items.append({'id': i, 'en': en, 'placeholders': extract_placeholders(en)})
+                it = {'id': i, 'en': en, 'placeholders': extract_placeholders(en)}
+                if byte_limit: it['max_bytes'] = utf8_len(en)
+                items.append(it)
             batches = make_batches(items, cfg.get('maxlines', 50), cfg.get('maxchars', 8000))
             self.emit({'type': 'batch_init', 'n_batches': len(batches), 'label': label})
             self.log('  %s: %d dòng -> %d lô (chạy %d luồng)'
@@ -788,7 +924,7 @@ class TranslationRun:
         for rnd in range(1, cfg.get('rounds', 6) + 1):
             if self.stop.is_set(): break
             bad = [k for k, _ in pairs if k in vals and eng_of[k].strip()
-                   and eng_of[k] != k and check_line(eng_of[k], vals[k])]
+                   and eng_of[k] != k and check_line(eng_of[k], vals[k], byte_limit)]
             if not bad:
                 donef.close()
                 self.emit({'type': 'finished', 'status': 'ok', 'total': self.total,
@@ -805,7 +941,7 @@ class TranslationRun:
                            'done': len(done), 'bad': len(bad), 'msg': 'Đã dừng (resume sau).'}); return
         donef.close()
         bad = [k for k, _ in pairs if k in vals and eng_of[k].strip()
-               and eng_of[k] != k and check_line(eng_of[k], vals[k])]
+               and eng_of[k] != k and check_line(eng_of[k], vals[k], byte_limit)]
         self.emit({'type': 'finished', 'status': 'ok', 'total': self.total, 'done': len(done),
                    'bad': len(bad), 'msg': 'Xong (còn %d dòng nghi lỗi - bấm Bắt đầu lại để sửa).' % len(bad)})
 

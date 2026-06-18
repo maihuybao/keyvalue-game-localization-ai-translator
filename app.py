@@ -178,6 +178,15 @@ TR = {
     'lines_label': {'vi': 'Dòng/lô:', 'en': 'Lines/batch:'},
     'btn_test': {'vi': 'Kiểm tra kết nối', 'en': 'Test connection'},
     'btn_save_cfg': {'vi': 'Lưu cấu hình', 'en': 'Save config'},
+    'context_1m': {'vi': 'Context 1M (Claude beta)', 'en': 'Context 1M (Claude beta)'},
+    'context_1m_tip': {'vi': 'Gửi header anthropic-beta: context-1m-2025-08-07 để mở context window 1 triệu token. '
+                             'CHỈ cần cho Claude Sonnet 4 (cũ); các model mới (Opus 4.6/4.7/4.8, Sonnet 4.6, Fable 5) '
+                             'ĐÃ có 1M sẵn theo mặc định, không cần bật. Muốn tận dụng cửa sổ lớn thì tăng "dòng/lô". '
+                             'Một số router có thể từ chối header beta -> nếu gặp lỗi 400 thì bỏ tích.',
+                       'en': 'Send header anthropic-beta: context-1m-2025-08-07 to unlock the 1M-token context window. '
+                             'Only needed for Claude Sonnet 4 (legacy); newer models (Opus 4.6/4.7/4.8, Sonnet 4.6, Fable 5) '
+                             'already have 1M by default. To actually use the larger window, raise "lines/batch". '
+                             'Some routers may reject the beta header -> untick if you hit a 400 error.'},
     'debug_console': {'vi': 'Debug: in lỗi API ra console', 'en': 'Debug: print API errors to console'},
     'debug_tip': {'vi': 'Khi BẬT: mỗi lần gọi API lỗi (HTTP 4xx/5xx, JSON hỏng, sai cấu trúc...) sẽ in '
                         'URL + mã lỗi + NỘI DUNG API trả về ra console (terminal chạy app). KHÔNG in API key.',
@@ -313,12 +322,25 @@ TR = {
                   'en': 'No valid source ENG file in the TRANSLATE tab.'},
     'pv_loading': {'vi': 'Đang tải bản xem trước...', 'en': 'Loading preview...'},
     'pv_load_err': {'vi': 'Lỗi tải xem trước: %s', 'en': 'Preview load error: %s'},
-    'pv_summary': {'vi': 'Tổng %d dòng  |  đã dịch %d  |  chưa %d  |  nghi lỗi %d',
-                   'en': 'Total %d lines  |  translated %d  |  pending %d  |  suspicious %d'},
+    'pv_summary': {'vi': 'Tổng %d dòng  |  đã dịch %d  |  chưa %d  |  nghi lỗi %d  |  vượt byte %d',
+                   'en': 'Total %d lines  |  translated %d  |  pending %d  |  suspicious %d  |  over-byte %d'},
     'pv_filtered': {'vi': 'Hiển thị %d/%d dòng (đang lọc)', 'en': 'Showing %d/%d lines (filtered)'},
     'col_key': {'vi': 'Key', 'en': 'Key'},
     'col_en': {'vi': 'Tiếng Anh', 'en': 'English'},
     'col_vi': {'vi': 'Tiếng Việt', 'en': 'Vietnamese'},
+    'col_byte_en': {'vi': 'Byte EN', 'en': 'EN bytes'},
+    'col_byte_vi': {'vi': 'Byte VI', 'en': 'VI bytes'},
+    'only_over': {'vi': 'Chỉ hiện vượt byte', 'en': 'Show only over-byte'},
+    'byte_limit': {'vi': 'Giới hạn byte ≤ bản gốc', 'en': 'Limit bytes ≤ source'},
+    'byte_limit_tip': {'vi': 'Khi BẬT: ép số byte UTF-8 của bản dịch KHÔNG vượt câu gốc EN (buffer game). '
+                             'Gửi ngân sách max_bytes cho AI và DỊCH LẠI dòng còn vượt qua các vòng tự-sửa. '
+                             'Khi TẮT: chỉ XEM đối chiếu byte + tô đỏ cảnh báo ở tab Xem trước (không dịch lại). '
+                             'Lưu ý: tiếng Việt có dấu tốn 2-3 byte/ký tự nên nhiều dòng có thể KHÔNG thể vừa.',
+                       'en': 'When ON: force the translation UTF-8 byte count NOT to exceed the source EN line '
+                             '(game buffer). Sends a max_bytes budget to the AI and RE-TRANSLATES over-byte lines '
+                             'across self-fix rounds. When OFF: only compare bytes + red warning in the Preview tab '
+                             '(no re-translation). Note: Vietnamese diacritics cost 2-3 bytes/char so some lines may '
+                             'be impossible to fit.'},
     # -- dialog / file dialog chung --
     'dlg_err': {'vi': 'Lỗi', 'en': 'Error'},
     'dlg_cant_save_cfg': {'vi': 'Không lưu được config: %s', 'en': 'Could not save config: %s'},
@@ -627,9 +649,11 @@ class StatCard(QFrame):
 # QTableView + model ảo hóa: chỉ vẽ phần nhìn thấy -> mở tab tức thì kể cả vài chục nghìn dòng
 # (QTableWidget tạo item cho MỌI ô sẽ làm đơ UI khi file lớn).
 _PV_BRUSH = {1: QBrush(QColor('#33290f')), 2: QBrush(QColor('#3a1f29'))}   # chưa dịch / nghi lỗi
+_PV_OVER = QBrush(QColor('#5a1d1d'))   # ô 'Byte VI' khi bản dịch VƯỢT byte gốc (đỏ đậm cảnh báo)
 
 class PreviewModel(QAbstractTableModel):
-    HEAD = ['Key', 'Tiếng Anh', 'Tiếng Việt']
+    # row = (key, en, vi, status, en_bytes, vi_bytes) — thêm 2 cột so sánh byte
+    HEAD = ['Key', 'Tiếng Anh', 'Tiếng Việt', 'Byte EN', 'Byte VI']
     CHUNK = 250                                       # số hàng nạp mỗi lần cuộn (lazy load)
     def __init__(self):
         super().__init__(); self._rows = []; self._loaded = 0   # _rows: toàn bộ; _loaded: số hàng đã lộ
@@ -641,7 +665,7 @@ class PreviewModel(QAbstractTableModel):
     def rowCount(self, parent=QModelIndex()):
         return 0 if parent.isValid() else self._loaded   # chỉ lộ phần đã nạp
     def columnCount(self, parent=QModelIndex()):
-        return 3
+        return 5
     # --- LAZY LOAD: cuộn tới cuối -> nạp thêm 1 chunk ---
     def canFetchMore(self, parent=QModelIndex()):
         return False if parent.isValid() else self._loaded < len(self._rows)
@@ -660,10 +684,16 @@ class PreviewModel(QAbstractTableModel):
             self.endInsertRows()
     def data(self, index, role=Qt.ItemDataRole.DisplayRole):
         if not index.isValid(): return None
-        r = self._rows[index.row()]
+        r = self._rows[index.row()]; col = index.column()
         if role in (Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.ToolTipRole):
-            return r[index.column()]
+            if col == 3: return str(r[4])             # Byte EN
+            if col == 4: return str(r[5])             # Byte VI
+            return r[col]                             # key / en / vi
+        if role == Qt.ItemDataRole.TextAlignmentRole and col in (3, 4):
+            return int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         if role == Qt.ItemDataRole.BackgroundRole:
+            if col == 4 and r[5] > r[4] and r[2].strip() and r[2] != r[1]:
+                return _PV_OVER                       # bản dịch vượt byte gốc -> tô đỏ ô Byte VI
             return _PV_BRUSH.get(r[3])
         return None
     def headerData(self, section, orient, role=Qt.ItemDataRole.DisplayRole):
@@ -673,16 +703,19 @@ class PreviewModel(QAbstractTableModel):
 
 class PreviewFilter(QSortFilterProxyModel):
     def __init__(self):
-        super().__init__(); self.query = ''; self.only_pending = False
+        super().__init__(); self.query = ''; self.only_pending = False; self.only_over = False
     def set_query(self, q):
         self.query = (q or '').strip().lower(); self.invalidateFilter()
     def set_only(self, b):
         self.only_pending = bool(b); self.invalidateFilter()
+    def set_only_over(self, b):
+        self.only_over = bool(b); self.invalidateFilter()
     def filterAcceptsRow(self, row, parent):
         rows = self.sourceModel()._rows
         if row >= len(rows): return False
-        k, en, vi, status = rows[row]
+        k, en, vi, status, en_b, vi_b = rows[row]
         if self.only_pending and status == 0: return False
+        if self.only_over and not (vi.strip() and vi != en and vi_b > en_b): return False
         q = self.query
         if q and q not in k.lower() and q not in en.lower() and q not in vi.lower(): return False
         return True
@@ -834,6 +867,8 @@ class MainWindow(QMainWindow):
         g.addWidget(QLabel(self.t('lines_label')), 6, 0)
         self.sp_maxlines = QSpinBox(); self.sp_maxlines.setRange(5, 1000); self.sp_maxlines.setValue(50)
         g.addWidget(self.sp_maxlines, 6, 1)
+        self.cb_context_1m = QCheckBox(self.t('context_1m')); self.cb_context_1m.setToolTip(self.t('context_1m_tip'))
+        g.addWidget(self.cb_context_1m, 6, 2, 1, 2)
         lay.addWidget(grid)
 
         row = QHBoxLayout()
@@ -969,6 +1004,9 @@ class MainWindow(QMainWindow):
         mh.addWidget(QLabel(self.t('model_translate_label')))
         self.cb_model_tr = self._make_model_combo()
         mh.addWidget(self.cb_model_tr, 1)
+        self.cb_byte_limit = QCheckBox(self.t('byte_limit')); self.cb_byte_limit.setToolTip(self.t('byte_limit_tip'))
+        self.cb_byte_limit.toggled.connect(self._on_byte_limit_toggle)
+        mh.addWidget(self.cb_byte_limit)
         lay.addWidget(mdl)
 
         ctl = QHBoxLayout()
@@ -1030,13 +1068,16 @@ class MainWindow(QMainWindow):
         self.ed_search = QLineEdit(); self.ed_search.setPlaceholderText(self.t('search_ph'))
         self.ed_search.textChanged.connect(self._filter_preview)
         self.cb_only_pending = QCheckBox(self.t('only_pending')); self.cb_only_pending.stateChanged.connect(self._filter_preview)
-        bar.addWidget(self.btn_preview); bar.addWidget(self.ed_search, 1); bar.addWidget(self.cb_only_pending)
+        self.cb_only_over = QCheckBox(self.t('only_over')); self.cb_only_over.stateChanged.connect(self._filter_preview)
+        bar.addWidget(self.btn_preview); bar.addWidget(self.ed_search, 1)
+        bar.addWidget(self.cb_only_pending); bar.addWidget(self.cb_only_over)
         lay.addLayout(bar)
         self.lbl_preview = QLabel(self.t('pv_not_loaded'))
         self.lbl_preview.setObjectName('muted'); lay.addWidget(self.lbl_preview)
         # QTableView + model ẢO HÓA -> mở tức thì kể cả file rất lớn (không đơ UI)
         self.preview_model = PreviewModel()
-        self.preview_model.head = [self.t('col_key'), self.t('col_en'), self.t('col_vi')]
+        self.preview_model.head = [self.t('col_key'), self.t('col_en'), self.t('col_vi'),
+                                   self.t('col_byte_en'), self.t('col_byte_vi')]
         self.preview_proxy = PreviewFilter(); self.preview_proxy.setSourceModel(self.preview_model)
         self.preview = QTableView()
         self.preview.setModel(self.preview_proxy)
@@ -1048,6 +1089,8 @@ class MainWindow(QMainWindow):
         hh.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
         hh.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         hh.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        hh.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        hh.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
         self.preview.setColumnWidth(0, 240)
         lay.addWidget(self.preview, 1)
         return w
@@ -1061,7 +1104,8 @@ class MainWindow(QMainWindow):
         # đọc + parse + đối chiếu Ở THREAD NỀN -> không đơ UI khi file lớn / đang dịch
         self._preview_loading = True; self.btn_preview.setEnabled(False)
         self.lbl_preview.setText(self.t('pv_loading'))
-        t = FnThread(lambda: E.build_preview_rows(src, out))
+        bl = self.cb_byte_limit.isChecked() if hasattr(self, 'cb_byte_limit') else False
+        t = FnThread(lambda: E.build_preview_rows(src, out, bl))
         t.done.connect(self._on_preview_loaded); self._threads.append(t); t.start()
 
     def _on_preview_loaded(self, res):
@@ -1071,17 +1115,25 @@ class MainWindow(QMainWindow):
         rows, st = res
         self._preview_count = len(rows)
         self.preview_model.set_rows(rows)          # set 1 phát, model ảo hóa -> tức thì
-        self.lbl_preview.setText(self.t('pv_summary', len(rows), st['done'], st['pending'], st['bad']))
+        self.lbl_preview.setText(self.t('pv_summary', len(rows), st['done'], st['pending'],
+                                         st['bad'], st.get('over', 0)))
         self._filter_preview()
 
     def _filter_preview(self):
         only = self.cb_only_pending.isChecked(); q = self.ed_search.text().strip()
-        if only or q:
+        over = self.cb_only_over.isChecked() if hasattr(self, 'cb_only_over') else False
+        if only or over or q:
             self.preview_model.load_all()      # đang lọc -> cần thấy toàn bộ để kết quả đủ
         self.preview_proxy.set_only(only)
+        self.preview_proxy.set_only_over(over)
         self.preview_proxy.set_query(q)
-        if self._preview_count and (q or only):
+        if self._preview_count and (q or only or over):
             self.lbl_preview.setText(self.t('pv_filtered', self.preview_proxy.rowCount(), self._preview_count))
+
+    def _on_byte_limit_toggle(self, _on):
+        # đổi trạng thái ép byte -> nếu bảng Xem trước đã tải thì nạp lại để cập nhật tô màu / nghi lỗi
+        if getattr(self, '_preview_count', 0):
+            self._load_preview()
 
     def _on_tab_changed(self, idx):
         if idx == 3 and self._preview_count == 0:      # 3 = tab XEM TRƯỚC / PREVIEW
@@ -1247,9 +1299,10 @@ class MainWindow(QMainWindow):
         except Exception:
             return {'provider': 'openai', 'base_url': 'https://chat.trollllm.xyz/v1', 'keys': [],
                     'model': 'claude-sonnet-4-6', 'models': [], 'model_prompt': '', 'model_translate': '',
-                    'max_tokens': 8192, 'temperature': 0.3, 'debug': True,
+                    'max_tokens': 8192, 'temperature': 0.3, 'context_1m': False, 'debug': True,
                     'timeout': 180, 'workers': 8, 'maxlines': 50, 'maxchars': 8000, 'retries': 5,
-                    'rounds': 6, 'mode': 'file', 'exts': '', 'sysprompt_path': 'system_prompt.txt', 'lang': 'vi'}
+                    'rounds': 6, 'mode': 'file', 'exts': '', 'byte_limit': False,
+                    'sysprompt_path': 'system_prompt.txt', 'lang': 'vi'}
 
     # ---------- snapshot / restore (giữ ô nhập khi đổi ngôn ngữ -> rebuild) ----------
     def _snapshot_ui(self):
@@ -1272,11 +1325,13 @@ class MainWindow(QMainWindow):
         self._set_model_combo(self.cb_model_tr, c.get('model_translate', ''))
         self.sp_maxtok.setValue(int(c['max_tokens'])); self.sp_temp.setValue(float(c['temperature']))
         self.cb_send_temp.setChecked(bool(c.get('send_temperature', True))); self.sp_temp.setEnabled(self.cb_send_temp.isChecked())
+        self.cb_context_1m.setChecked(bool(c.get('context_1m', False)))
         self.cb_debug.setChecked(bool(c.get('debug', True)))
         self.sp_timeout.setValue(int(c['timeout'])); self.sp_workers.setValue(int(c['workers']))
         self.sp_maxlines.setValue(int(c['maxlines'])); self.cb_auto_switch.setChecked(bool(c['auto_switch']))
         self.ed_src.setText(c['src']); self.ed_out.setText(c['out'])
         self.ed_ext.setText(c.get('exts', '') or '')
+        self.cb_byte_limit.setChecked(bool(c.get('byte_limit', False)))
         (self.rb_mode_folder if c.get('mode') == 'folder' else self.rb_mode_file).setChecked(True)
         self.ed_game.setText(s['game']); self.ed_sample.setText(s['sample'])
         self.cb_tone.setCurrentIndex(s['tone_idx']); self.ed_note.setText(s['note'])
@@ -1308,6 +1363,7 @@ class MainWindow(QMainWindow):
         self.sp_maxtok.setValue(int(c.get('max_tokens', 8192)))
         self.sp_temp.setValue(float(c.get('temperature', 0.3)))
         self.cb_send_temp.setChecked(bool(c.get('send_temperature', True))); self.sp_temp.setEnabled(self.cb_send_temp.isChecked())
+        self.cb_context_1m.setChecked(bool(c.get('context_1m', False)))
         self.cb_debug.setChecked(bool(c.get('debug', True)))
         self.sp_timeout.setValue(int(c.get('timeout', 180)))
         self.sp_workers.setValue(int(c.get('workers', 8)))
@@ -1315,6 +1371,7 @@ class MainWindow(QMainWindow):
         self.cb_auto_switch.setChecked(bool(c.get('auto_switch', False)))
         self.ed_src.setText(c.get('src', '')); self.ed_out.setText(c.get('out', ''))
         self.ed_ext.setText(c.get('exts', '') or '')
+        self.cb_byte_limit.setChecked(bool(c.get('byte_limit', False)))
         (self.rb_mode_folder if c.get('mode') == 'folder' else self.rb_mode_file).setChecked(True)
         self._on_provider_change()
         self._on_mode_change()      # đặt nhãn + ẩn/hiện ô đuôi + gọi _update_resume (mốc đã dịch đã lưu)
@@ -1341,6 +1398,7 @@ class MainWindow(QMainWindow):
             'auto_switch': self.cb_auto_switch.isChecked(),
             'max_tokens': self.sp_maxtok.value(), 'temperature': self.sp_temp.value(),
             'send_temperature': self.cb_send_temp.isChecked(),
+            'context_1m': self.cb_context_1m.isChecked() if hasattr(self, 'cb_context_1m') else False,
             'debug': self.cb_debug.isChecked() if hasattr(self, 'cb_debug') else True,
             'timeout': self.sp_timeout.value(), 'workers': self.sp_workers.value(),
             'maxlines': self.sp_maxlines.value(), 'maxchars': int(self.cfg.get('maxchars', 8000)),
@@ -1348,6 +1406,7 @@ class MainWindow(QMainWindow):
             'src': self.ed_src.text().strip(), 'out': self.ed_out.text().strip(),
             'mode': 'folder' if self._folder_mode() else 'file',
             'exts': self.ed_ext.text().strip() if hasattr(self, 'ed_ext') else '',
+            'byte_limit': self.cb_byte_limit.isChecked() if hasattr(self, 'cb_byte_limit') else False,
             'sysprompt': self.ed_prompt.toPlainText().strip(),
             'sysprompt_path': self.cfg.get('sysprompt_path', 'system_prompt.txt'),
             'lang': self.lang,

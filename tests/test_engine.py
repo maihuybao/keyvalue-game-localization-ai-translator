@@ -455,5 +455,315 @@ check('make_provider debug=True', E.make_provider({'provider': 'openai', 'base_u
 check('make_provider debug mặc định False', E.make_provider({'provider': 'openai', 'base_url': 'http://x'}).debug is False)
 
 # ---------------------------------------------------------------------------
+print('\n[11] Byte: so sánh byte gốc/dịch + ép byte không vượt')
+check('utf8_len ASCII', E.utf8_len('abc') == 3)
+check('utf8_len dấu tiếng Việt', E.utf8_len('á') == 2 and E.utf8_len('Đồng ý') == 10, str(E.utf8_len('Đồng ý')))
+check('utf8_len None/rỗng', E.utf8_len('') == 0 and E.utf8_len(None) == 0)
+
+# check_line: luật byte chỉ áp khi byte_limit=True
+check('check_line không xét byte khi tắt', E.check_line('OK', 'Đồng ý') == [])
+check('check_line byte_limit bắt vượt', any('vượt_byte' in x for x in E.check_line('OK', 'Đồng ý', byte_limit=True)),
+      str(E.check_line('OK', 'Đồng ý', byte_limit=True)))
+check('check_line byte_limit không báo khi vi <= en', E.check_line('Hello world', 'Chao', byte_limit=True) == [])
+check('check_line byte_limit vẫn bắt lỗi placeholder', 'lệch_{biến}' in E.check_line('Hi {0}', 'Chào', byte_limit=True))
+
+# build_user_prompt: nhúng max_bytes + hướng dẫn khi item có ngân sách byte
+up_b = E.build_user_prompt([{'id': 0, 'en': 'Start', 'placeholders': [], 'max_bytes': 5}])
+pl_b = json.loads(up_b.rsplit('\n\n', 1)[-1])
+check('build_user_prompt nhúng max_bytes', pl_b[0].get('max_bytes') == 5, str(pl_b))
+check('build_user_prompt có hướng dẫn byte', 'max_bytes' in up_b and 'byte' in up_b.lower())
+up_nb = E.build_user_prompt([{'id': 0, 'en': 'Start', 'placeholders': []}])
+check('build_user_prompt KHÔNG có max_bytes khi không ngân sách',
+      'max_bytes' not in json.loads(up_nb.rsplit('\n\n', 1)[-1])[0] and 'max_bytes' not in up_nb)
+
+# build_preview_rows: thêm cột byte + thống kê 'over'
+workb = tempfile.mkdtemp(prefix='dich_byte_')
+try:
+    srcb = os.path.join(workb, 'in.txt'); outb = os.path.join(workb, 'in_VI.txt')
+    open(srcb, 'w', encoding='utf-8').write('A=OK\nB=Hello world here\nC=Quit\n')
+    open(outb, 'w', encoding='utf-8').write('A=Đồng ý\nB=Thoát\nC=Quit\n')   # A vượt byte; B ngắn hơn; C==EN
+    rows, st = E.build_preview_rows(srcb, outb)
+    rmap = {r[0]: r for r in rows}
+    check('preview rows 6 cột (key,en,vi,status,en_b,vi_b)', len(rows[0]) == 6, str(rows[0]))
+    check('preview byte EN/VI đúng', rmap['A'][4] == E.utf8_len('OK') and rmap['A'][5] == E.utf8_len('Đồng ý'),
+          '%s/%s' % (rmap['A'][4], rmap['A'][5]))
+    check('preview đếm over=1 (chỉ A vượt)', st['over'] == 1, str(st))
+    check('preview byte_limit TẮT -> A không bị nghi lỗi', rmap['A'][3] == 0, str(rmap['A']))
+    rows2, st2 = E.build_preview_rows(srcb, outb, byte_limit=True)
+    r2map = {r[0]: r for r in rows2}
+    check('preview byte_limit BẬT -> A nghi lỗi (status 2)', r2map['A'][3] == 2, str(r2map['A']))
+    check('preview byte_limit B (ngắn hơn) vẫn ok', r2map['B'][3] == 0, str(r2map['B']))
+finally:
+    shutil.rmtree(workb, ignore_errors=True)
+
+# end-to-end: byte_limit BẬT, mock luôn làm vi DÀI hơn -> gửi max_bytes + còn dòng vượt byte
+workb2 = tempfile.mkdtemp(prefix='dich_byte_e2e_')
+try:
+    src2 = os.path.join(workb2, 'in.txt'); out2 = os.path.join(workb2, 'in_VI.txt')
+    open(src2, 'w', encoding='utf-8').write('\n'.join('L%d=Line %d here' % (i, i) for i in range(6)) + '\n')
+    seen_prompts = []
+    class _CapProv(MockProvider):
+        def call(self, model, key, system, user):
+            seen_prompts.append(user); return super().call(model, key, system, user)
+    cfgb = dict(src=src2, out=out2, keys=['k'], model='m', models=['m'], workers=3,
+                maxlines=4, maxchars=8000, retries=2, rounds=2, max_tokens=8192,
+                temperature=0.3, timeout=30, sysprompt='T', byte_limit=True)
+    evb = run_with_provider(cfgb, _CapProv())
+    finb = [e for e in evb if e['type'] == 'finished']
+    check('byte_limit: gửi max_bytes trong payload', any('"max_bytes"' in p for p in seen_prompts))
+    check('byte_limit: còn dòng vượt byte (mock không rút được)', finb and finb[-1]['bad'] > 0, str(finb[-1] if finb else None))
+    # cùng input, byte_limit TẮT -> KHÔNG còn nghi lỗi (mock VI_ hợp lệ placeholder)
+    out3 = os.path.join(workb2, 'in2_VI.txt'); cfgn = dict(cfgb); cfgn['out'] = out3; cfgn['byte_limit'] = False
+    evn = run_with_provider(cfgn, MockProvider())
+    finn = [e for e in evn if e['type'] == 'finished']
+    check('byte_limit TẮT: sạch lỗi (bad=0)', finn and finn[-1]['bad'] == 0, str(finn[-1] if finn else None))
+finally:
+    shutil.rmtree(workb2, ignore_errors=True)
+
+# ---------------------------------------------------------------------------
+print('\n[12] Tự giảm max_tokens khi vượt trần OUTPUT của model (400)')
+# thông báo lỗi thật của router (Anthropic-style) khi max_tokens vượt trần model
+B400 = ('{"error":{"message":"[claude/claude-opus-4-8] [400]: {\\"type\\":\\"error\\",\\"error\\":'
+        '{\\"type\\":\\"invalid_request_error\\",\\"message\\":\\"max_tokens: 1000000 > 128000, '
+        'which is the maximum allowed number of output tokens for claude-opus-4-8\\"}}"}}')
+check('parse_max_tokens_cap Anthropic > 128000', E.parse_max_tokens_cap(B400) == 128000, str(E.parse_max_tokens_cap(B400)))
+check('parse_max_tokens_cap OpenAI at most', E.parse_max_tokens_cap('supports at most 16384 completion tokens') == 16384)
+check('parse_max_tokens_cap maximum is', E.parse_max_tokens_cap('maximum allowed is 4096 tokens') == 4096)
+check('parse_max_tokens_cap không có số -> None', E.parse_max_tokens_cap('bad request') is None)
+
+# _max_tokens_cap_from_error: chỉ áp cho lỗi max_tokens/output token (KHÔNG đụng context-length đầu vào)
+_pp = E.OpenAIProvider('http://x'); _pp.max_tokens = 1000000
+check('cap_from_error: max_tokens output -> trả trần', _pp._max_tokens_cap_from_error(B400) == 128000)
+check('cap_from_error: lỗi context-length đầu vào -> None (không đụng)',
+      _pp._max_tokens_cap_from_error('maximum context length is 8192 tokens') is None)
+check('cap_from_error: trần >= max hiện tại -> None',
+      E.OpenAIProvider('http://x')._max_tokens_cap_from_error('max_tokens 999 > 200000 output tokens') is None)
+
+# E2E _post: 400 vượt trần -> TỰ giảm max_tokens + raise Transient (để translate_batch thử lại)
+_pc = E.OpenAIProvider('http://x', debug=False); _pc.max_tokens = 1000000
+_pc._client = _FakeClient(_FakeResp(400, B400))
+_emsg = ''
+try: _pc.call('cc/claude-opus-4-8', 'k', 's', 'u')
+except E.Transient as e: _emsg = str(e)
+check('auto-clamp: giảm max_tokens còn 128000', _pc.max_tokens == 128000, str(_pc.max_tokens))
+check('auto-clamp: Transient báo đã giảm', 'đã giảm' in _emsg, _emsg)
+
+# 400 thường (không liên quan max_tokens) -> KHÔNG đụng max_tokens
+_pc2 = E.OpenAIProvider('http://x'); _pc2.max_tokens = 5000
+_pc2._client = _FakeClient(_FakeResp(400, 'generic bad request'))
+try: _pc2.call('m', 'k', 's', 'u')
+except Exception: pass
+check('400 thường giữ nguyên max_tokens', _pc2.max_tokens == 5000, str(_pc2.max_tokens))
+
+# test_connection: tự phục hồi (clamp rồi thử lại) -> báo OK + đã tự giảm
+class _SeqClient:
+    def __init__(self, resps): self._resps = list(resps); self.i = 0
+    def post(self, *a, **k):
+        r = self._resps[min(self.i, len(self._resps) - 1)]; self.i += 1; return r
+    def get(self, *a, **k): return self._resps[0]
+    def close(self): pass
+_ok_json = {'choices': [{'message': {'content': 'OK'}, 'finish_reason': 'stop'}]}
+_pt = E.OpenAIProvider('http://x'); _pt.max_tokens = 1000000
+_pt._client = _SeqClient([_FakeResp(400, B400), _FakeResp(200, '{}', jsonobj=_ok_json)])
+_ok, _msg = E.test_connection(_pt, 'k', 'm')
+check('test_connection tự phục hồi sau clamp', _ok and 'đã tự giảm max_tokens' in _msg, '%s | %s' % (_ok, _msg))
+
+# --- VƯỢT CONTEXT WINDOW (tổng input+output > cửa sổ, vd 9Router 128000) -> giảm max_tokens chừa chỗ input ---
+CTX400 = ('{"error":{"message":"This model\'s maximum context length is 128000 tokens. However, you '
+          'requested 130050 tokens (2050 in the messages, 128000 in the completion). Please reduce the '
+          'length of the messages or completion.","type":"invalid_request_error"}}')
+check('parse_max_tokens_cap đọc trần ngữ cảnh', E.parse_max_tokens_cap(CTX400) == 128000, str(E.parse_max_tokens_cap(CTX400)))
+check('parse_max_tokens_cap "context window of N" (không có max)', E.parse_max_tokens_cap('exceeds the context window of 128000 tokens') == 128000)
+_pcx = E.OpenAIProvider('http://x'); _pcx.max_tokens = 128000
+check('context_overflow -> nửa cửa sổ', _pcx._context_overflow_cap_from_error(CTX400) == 64000, str(_pcx._context_overflow_cap_from_error(CTX400)))
+check('context_overflow: max_tokens đã nhỏ -> None (do input to)',
+      E.OpenAIProvider('http://x', max_tokens=4096)._context_overflow_cap_from_error(CTX400) is None)
+check('context_overflow: lỗi không phải ngữ cảnh -> None', _pcx._context_overflow_cap_from_error('bad request') is None)
+# E2E _post: 400 vượt ngữ cảnh -> giảm max_tokens + raise Transient
+_pce = E.OpenAIProvider('http://x', debug=False); _pce.max_tokens = 128000
+_pce._client = _FakeClient(_FakeResp(400, CTX400))
+_emc = ''
+try: _pce.call('m', 'k', 's', 'u')
+except E.Transient as e: _emc = str(e)
+check('auto-fix ngữ cảnh: giảm max_tokens còn 64000', _pce.max_tokens == 64000, str(_pce.max_tokens))
+check('auto-fix ngữ cảnh: Transient báo đã giảm', 'đã giảm' in _emc and 'context window' in _emc, _emc)
+# test_connection tự phục hồi sau khi giảm vì vượt ngữ cảnh
+_ptc = E.OpenAIProvider('http://x'); _ptc.max_tokens = 128000
+_ptc._client = _SeqClient([_FakeResp(400, CTX400), _FakeResp(200, '{}', jsonobj=_ok_json)])
+_ok2, _msg2 = E.test_connection(_ptc, 'k', 'm')
+check('test_connection phục hồi sau vượt ngữ cảnh', _ok2 and 'đã tự giảm max_tokens' in _msg2, '%s | %s' % (_ok2, _msg2))
+
+# ---------------------------------------------------------------------------
+print('\n[13] Context 1M: header anthropic-beta')
+check('build_anthropic_beta rỗng', E.build_anthropic_beta({}) == '')
+check('build_anthropic_beta context_1m', E.build_anthropic_beta({'context_1m': True}) == 'context-1m-2025-08-07')
+check('build_anthropic_beta thô (tách , space)', E.build_anthropic_beta({'anthropic_beta': 'foo, bar baz'}) == 'foo,bar,baz')
+check('build_anthropic_beta bỏ trùng', E.build_anthropic_beta({'context_1m': True, 'anthropic_beta': 'context-1m-2025-08-07'}) == 'context-1m-2025-08-07')
+check('CONTEXT_1M_BETA đúng giá trị', E.CONTEXT_1M_BETA == 'context-1m-2025-08-07')
+
+# header thực sự gắn anthropic-beta khi bật, và KHÔNG gắn khi tắt
+_pb = E.OpenAIProvider('http://x', anthropic_beta='context-1m-2025-08-07')
+check('OpenAI headers có anthropic-beta', _pb.headers('K') == {'Authorization': 'Bearer K', 'anthropic-beta': 'context-1m-2025-08-07'}, str(_pb.headers('K')))
+_pa = E.AnthropicProvider('http://x', anthropic_beta='context-1m-2025-08-07')
+check('Anthropic headers có anthropic-beta + x-api-key',
+      _pa.headers('K') == {'x-api-key': 'K', 'anthropic-version': '2023-06-01', 'anthropic-beta': 'context-1m-2025-08-07'}, str(_pa.headers('K')))
+check('OpenAI headers KHÔNG có beta khi tắt', 'anthropic-beta' not in E.OpenAIProvider('http://x').headers('K'))
+check('make_provider context_1m -> anthropic_beta', E.make_provider({'provider': 'openai', 'base_url': 'http://x', 'context_1m': True}).anthropic_beta == E.CONTEXT_1M_BETA)
+check('make_provider mặc định không beta', E.make_provider({'provider': 'openai', 'base_url': 'http://x'}).anthropic_beta == '')
+
+# ---------------------------------------------------------------------------
+# [14] Newline thật trong value — ghép dòng vật lý + check đếm newline
+# Bug cũ: parse_pairs_text cắt txt.split('\n') -> value có \n thật bị mất phần sau.
+# Fix: ghép dòng continuation; Doc.serialize ghi NHIỀU DÒNG; check_line đếm newline thật.
+print('\n[14] Newline trong value (ghép dòng vật lý)')
+
+# --- parse_pairs_text: ghép dòng ---
+_raw, _pairs = E.parse_pairs_text('K=A\n  D\nB=C')
+check('parse_pairs_text ghép dòng continuation',
+      _pairs == [('K', 'A\n  D'), ('B', 'C')], str(_pairs))
+check('parse_pairs_text giữ raw đầy đủ (3 dòng)', _raw == ['K=A', '  D', 'B=C'], str(_raw))
+
+# comment phá vỡ continuation
+_raw2, _pairs2 = E.parse_pairs_text('K=A\n# cmt\nB=C')
+check('comment phá vỡ continuation',
+      _pairs2 == [('K', 'A'), ('B', 'C')], str(_pairs2))
+
+# dòng rỗng giữ \n trong value
+_raw3, _pairs3 = E.parse_pairs_text('K=A\n\nB=C')
+check('dòng rỗng trong value giữ \\n',
+      _pairs3 == [('K', 'A\n'), ('B', 'C')], str(_pairs3))
+
+# dòng thừa không thuộc KEY nào (trước KEY đầu tiên) -> bỏ
+_raw4, _pairs4 = E.parse_pairs_text('orphan\nK=A\nB=C')
+check('dòng thừa trước KEY đầu -> bỏ',
+      _pairs4 == [('K', 'A'), ('B', 'C')], str(_pairs4))
+
+# --- Doc.serialize kv: ghi NHIỀU DÒNG vật lý ---
+_txt = '# cmt\nK=A\n  D\nK2=X\n'
+_doc = E.parse_doc(_txt)
+check('parse_doc kv ghép continuation', _doc.pairs == [('K', 'A\n  D'), ('K2', 'X')], str(_doc.pairs))
+_out_txt = _doc.serialize({'K': 'X\nY', 'K2': 'Z'})
+check('serialize ghi NHIỀU DÒNG vật lý đúng vị trí',
+      _out_txt == '# cmt\nK=X\nY\n  D\nK2=Z\n', repr(_out_txt))
+# byte-for-byte với file gốc (vals={} -> giữ nguyên)
+_out_orig = _doc.serialize({})
+check('serialize({}) khớp byte-for-byte với input (regression file 1-dòng value)',
+      _out_orig == _txt, repr(_out_orig))
+
+# vi có \r -> thay bằng space
+_out_cr = E.parse_doc('K=A\n').serialize({'K': 'X\rY'})
+check('serialize thay \\r bằng space (an toàn)', _out_cr == 'K=X Y\n', repr(_out_cr))
+
+# --- check_line: đếm newline thật ---
+check('check_line lệch newline thật',
+      'lệch_\\n' in E.check_line('A\nB', 'X Y'),
+      str(E.check_line('A\nB', 'X Y')))
+check('check_line newline khớp -> OK',
+      E.check_line('A\nB', 'X\nY') == [], str(E.check_line('A\nB', 'X\nY')))
+# \\n literal (2 ký tự) KHÔNG tính là newline thật
+check('check_line \\n LITERAL (2 ký tự) KHÔNG tính là newline thật',
+      E.check_line(r'A\nB', r'X\nY') == [], str(E.check_line(r'A\nB', r'X\nY')))
+
+# --- E2E: round-trip + resume + tự sửa + byte_limit ---
+work14 = tempfile.mkdtemp(prefix='dich_nl_')
+try:
+    src14 = os.path.join(work14, 'in.txt'); out14 = os.path.join(work14, 'in_VI.txt')
+
+    # (11) round-trip: dịch file có value 2 dòng -> file output giữ số dòng vật lý
+    open(src14, 'w', encoding='utf-8').write(
+        '# cmt\nTUT=A\nB\nSAME=SAME\nE=\nF=Single line value\n')
+    cfg14 = dict(src=src14, out=out14, keys=['k1'], model='m', models=['m'],
+                 workers=4, maxlines=4, maxchars=8000, retries=2, rounds=4,
+                 max_tokens=8192, temperature=0.3, timeout=30, sysprompt='TEST PROMPT')
+    evts14 = run_with_provider(cfg14, MockProvider())
+    res14 = open(out14, encoding='utf-8').read()
+    # TUT value 2 dòng -> serialize ghi 2 dòng vật lý (KEY + 1 newline + value 2 dòng)
+    lines14 = res14.split('\n')
+    # đếm dòng bắt đầu bằng 'TUT=' (chỉ dòng key, không tính dòng continuation)
+    tut_key_lines = [i for i, l in enumerate(lines14) if l.startswith('TUT=')]
+    check('round-trip TUT giữ key ở dòng riêng', len(tut_key_lines) == 1, str(tut_key_lines))
+    tut_idx = tut_key_lines[0]
+    # mock ghép 'VI_A\nB' (1 chuỗi có \n); serialize ghi thành 1 dòng vật lý 'TUT=VI_A\nB'
+    # -> split('\n') ra ['TUT=VI_A', 'B']; dòng tiếp theo (vật lý) = 'B'
+    check('round-trip TUT có value trên dòng tiếp theo (ghép dòng)',
+          lines14[tut_idx] == 'TUT=VI_A' and lines14[tut_idx + 1] == 'B',
+          repr(lines14[tut_idx:tut_idx + 2]))
+    check('round-trip SAME giữ nguyên', any(l == 'SAME=SAME' for l in lines14))
+    check('round-trip F (value đơn) không bị ghép',
+          any(l == 'F=VI_Single line value' for l in lines14))
+    check('round-trip comment giữ', lines14[0] == '# cmt')
+
+    # (12) resume: file đã dịch 1 phần có value 2 dòng -> load_progress giữ \n
+    out14b = os.path.join(work14, 'in_VI_b.txt')
+    open(src14, 'w', encoding='utf-8').write('A=Line one\nLine two\nB=Other\n')
+    open(out14b, 'w', encoding='utf-8').write('A=VI_Line one\nVI_Line two\n')  # đã dịch A
+    open(out14b + '.done.txt', 'w', encoding='utf-8').write('A\n')
+    cfg14b = dict(cfg14); cfg14b['out'] = out14b
+    evts14b = run_with_provider(cfg14b, MockProvider())
+    res14b = open(out14b, encoding='utf-8').read()
+    # A đã dịch giữ \n; B được dịch mới
+    check('resume giữ \\n trong value đã dịch sẵn',
+          'A=VI_Line one\nVI_Line two\n' in res14b, repr(res14b))
+    check('resume dịch tiếp B', 'B=VI_Other' in res14b)
+    log14b = [e for e in evts14b if e['type'] == 'log']
+    check('resume có log "đã có N dòng dịch trước"',
+          any('Resume' in e.get('msg', '') and '1' in e.get('msg', '') for e in log14b),
+          str([e.get('msg', '') for e in log14b[:3]]))
+
+    # (13) tự sửa: AI trả value lệch newline -> dịch lại tự sửa
+    class MockDropNewline(MockProvider):
+        """Lần đầu trả value không có \n; các lần sau trả đúng (giả lập AI sai rồi tự sửa)."""
+        def __init__(self, **kw):
+            super().__init__(**kw); self.bad_once = True
+        def call(self, model, key, system, user):
+            with self.lock:
+                self.calls += 1; n = self.calls
+            payload = json.loads(user.rsplit('\n\n', 1)[-1])
+            if self.bad_once and any('\n' in it['en'] for it in payload):
+                self.bad_once = False
+                # Trả value đã GHÉP thành 1 dòng (lệch newline)
+                out = [{'id': it['id'],
+                        'vi': it['en'].replace('\n', ' ').replace('A', 'VI_A').replace('B', 'VI_B')
+                              if '\n' in it['en']
+                              else ('VI_' + it['en'] if it['en'] else it['en'])}
+                       for it in payload]
+                return json.dumps(out, ensure_ascii=False)
+            return super().call(model, key, system, user)
+    src14c = os.path.join(work14, 'in_c.txt'); out14c = os.path.join(work14, 'in_c_VI.txt')
+    open(src14c, 'w', encoding='utf-8').write('TUT=A\nB\n')
+    cfg14c = dict(cfg14); cfg14c['src'] = src14c; cfg14c['out'] = out14c
+    cfg14c['rounds'] = 3
+    evts14c = run_with_provider(cfg14c, MockDropNewline())
+    res14c = open(out14c, encoding='utf-8').read()
+    # Round 1: MockDropNewline trả 'VI_A VI_B' (1 dòng, lệch \n) -> check_line báo lỗi
+    # Round 2 (tự sửa): super().call() trả 'VI_A\nB' (đúng \n) -> ghi 'TUT=VI_A\nB'
+    check('tự sửa: round retry TUT có \\n đúng',
+          'TUT=VI_A\nB' in res14c, repr(res14c))
+    log14c = [e.get('msg', '') for e in evts14c if e['type'] == 'log']
+    check('tự sửa: có log Sửa-v',
+          any('Sửa-v' in m for m in log14c), str(log14c[:5]))
+
+    # (14) byte_limit: \n thật tính 1 byte UTF-8 (đúng thực tế, không phải 2)
+    # value 'A\nB' = 3 byte; 'VI_A\nVI_B' = 8 byte > 3 -> vượt
+    src14d = os.path.join(work14, 'in_d.txt'); out14d = os.path.join(work14, 'in_d_VI.txt')
+    open(src14d, 'w', encoding='utf-8').write('S=Short\n')
+    cfg14d = dict(cfg14); cfg14d['src'] = src14d; cfg14d['out'] = out14d
+    cfg14d['byte_limit'] = True
+    cfg14d['rounds'] = 2
+    # MockProvider trả 'VI_Short\n' = 9 byte > 5 byte -> vượt byte
+    evts14d = run_with_provider(cfg14d, MockProvider())
+    res14d = open(out14d, encoding='utf-8').read()
+    # check_line có 'vượt_byte' -> ghi nhưng engine best-effort giữ value
+    check('byte_limit \\n tính 1 byte (vi vẫn được ghi)',
+          'S=VI_Short' in res14d, repr(res14d))
+    # build_preview_rows: en_bytes/vi_bytes tính đúng \n
+    rows14, stats14 = E.build_preview_rows(src14c, out14c, byte_limit=False)
+    tut_row = next((r for r in rows14 if r[0] == 'TUT'), None)
+    check('preview_rows TUT en_bytes=3 (A\\nB)', tut_row and tut_row[4] == 3, str(tut_row))
+    check('preview_rows TUT vi_bytes=8 (VI_A\\nVI_B)', tut_row and tut_row[5] == 8, str(tut_row))
+finally:
+    shutil.rmtree(work14, ignore_errors=True)
+
+# ---------------------------------------------------------------------------
 print('\n%s  PASS=%d  FAIL=%d' % ('='*40, PASS, FAIL))
 sys.exit(1 if FAIL else 0)

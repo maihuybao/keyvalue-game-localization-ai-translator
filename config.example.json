@@ -14,6 +14,7 @@
   "max_tokens": 8192,
   "temperature": 0.3,
   "send_temperature": true,
+  "context_1m": false,
   "debug": true,
   "timeout": 180,
   "workers": 8,
@@ -25,6 +26,7 @@
   "out": "",
   "mode": "file",
   "exts": "",
+  "byte_limit": false,
   "sysprompt_path": "system_prompt.txt",
   "lang": "vi"
 }
